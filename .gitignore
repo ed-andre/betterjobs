@@ -52,6 +52,12 @@ companies_using_workday_p11.json
 companies_using_workday_p1.json
 companies_using_bamboohr_p4.json
 
+# Project specific data directories to exclude
+pipeline/dagster_betterjobs/dagster_betterjobs/data_load/raw_json/
+pipeline/dagster_betterjobs/dagster_betterjobs/data_load/extracted_csvs/
+pipeline/dagster_betterjobs/dagster_betterjobs/checkpoints/
+pipeline/dagster_betterjobs/dagster_betterjobs/data_load/datasource/*.csv
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
