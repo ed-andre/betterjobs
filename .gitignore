@@ -48,9 +48,7 @@ wheels/
 docs/setup-guide-internal.md
 song_lyrics.csv
 .cursor/mcp.json
-companies_using_workday_p11.json
-companies_using_workday_p1.json
-companies_using_bamboohr_p4.json
+
 
 # Project specific data directories to exclude
 pipeline/dagster_betterjobs/dagster_betterjobs/data_load/raw_json/
