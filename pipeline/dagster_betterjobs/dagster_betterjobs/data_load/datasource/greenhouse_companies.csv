@@ -1,0 +1,139 @@
+company_name,company_industry,employee_count_range,city,platform
+Taco Bell,Restaurants,"10,000+",Irvine,greenhouse
+EquipmentShare,Construction,"5001-10,000",Columbia,greenhouse
+Ruby Labs,"Technology, Information and Media",51-200,San Francisco,greenhouse
+SpaceX,Aviation and Aerospace Component Manufacturing,"10,000+",Hawthorne,greenhouse
+DoorDash,Software Development,"10,000+",San Francisco,greenhouse
+Scale AI,Software Development,1001-5000,San Francisco,greenhouse
+Crocs,Retail Apparel and Fashion,1001-5000,Broomfield,greenhouse
+Carvana,"Technology, Information and Internet","5001-10,000",Tempe,greenhouse
+MongoDB,Software Development,"5001-10,000",New York,greenhouse
+Elastic,Software Development,1001-5000,San Francisco,greenhouse
+Samsara,Software Development,1001-5000,San Francisco,greenhouse
+Curaleaf,Alternative Medicine,1001-5000, New York,greenhouse
+CoreWeave,IT Services and IT Consulting,501-1000,New York,greenhouse
+IXL Learning,E-Learning Providers,"5001-10,000",San Mateo (San Francisco Bay Area),greenhouse
+FeverUp,IT Services and IT Consulting,1001-5000,New York,greenhouse
+Intercom,Software Development,1001-5000,San Francisco,greenhouse
+Gusto,Software Development,1001-5000,San Francisco,greenhouse
+Relativity Space,Aviation and Aerospace Component Manufacturing,1001-5000,Long Beach,greenhouse
+The Scion Group,Real Estate,1001-5000,Chicago,greenhouse
+Spring Health,Mental Health Care,1001-5000,New York City,greenhouse
+Robinhood,Financial Services,1001-5000,Menlo Park,greenhouse
+Formlabs,Computers and Electronics Manufacturing,501-1000,Somerville,greenhouse
+Dropbox,Software Development,1001-5000,San Francisco,greenhouse
+Modern Animal,Veterinary Services,201-500,Culver City,greenhouse
+Thriveworks,Mental Health Care,1001-5000,Lynchburg,greenhouse
+Ogilvy,Advertising Services,"10,000+",New York,greenhouse
+Remitly,Financial Services,1001-5000,Seattle,greenhouse
+Abnormal Security,Computer and Network Security,501-1000,Las Vegas,greenhouse
+Braze,Software Development,1001-5000,New York,greenhouse
+AlixPartners,Business Consulting and Services,1001-5000,New York,greenhouse
+WeWork,Real Estate,"5001-10,000",New York,greenhouse
+The RealReal,Retail Apparel and Fashion,1001-5000,San Francisco,greenhouse
+Verkada,Software Development,1001-5000,San Mateo,greenhouse
+Pair Team,Hospitals and Health Care,51-200,San Francisco,greenhouse
+Bond Vet,Veterinary Services,201-500,New York,greenhouse
+Garner Health,Software Development,201-500,New York,greenhouse
+Figma,Design Services,"5001-10,000",San Francisco,greenhouse
+The Farmer's Dog,Manufacturing,501-1000,New York,greenhouse
+BetterUp,Professional Training and Coaching,1001-5000,Austin,greenhouse
+Planet Professional,Staffing and Recruiting,,Bedford,greenhouse
+Townsquare Interactive,Advertising Services,501-1000,Charlotte,greenhouse
+Cityblock Health,Hospitals and Health Care,1001-5000,Brooklyn,greenhouse
+Charlie Health,Mental Health Care,1001-5000,Bozeman,greenhouse
+West Monroe,Business Consulting and Services,1001-5000,Chicago,greenhouse
+Smartsheet,Software Development,1001-5000,Bellevue,greenhouse
+Airtable,Software Development,501-1000,San Francisco,greenhouse
+YETI,Manufacturing,1001-5000,Austin,greenhouse
+Legend Biotech,Biotechnology Research,1001-5000,Somerset,greenhouse
+"Ceribell, Inc",Pharmaceutical Manufacturing,201-500,Sunnyvale,greenhouse
+Mindbody,Wellness and Fitness Services,1001-5000,San Luis Obispo,greenhouse
+Peregrine,Software Development,51-200,San Francisco,greenhouse
+Slack,"Technology, Information and Internet",1001-5000,San Francisco,greenhouse
+Whatnot,"Technology, Information and Internet",501-1000,Los Angeles,greenhouse
+Brex,Financial Services,1001-5000,San Francisco,greenhouse
+Berkadia,Financial Services,1001-5000,New York,greenhouse
+Squarespace,Software Development,1001-5000,New York,greenhouse
+Duolingo,Software Development,1001-5000,Pittsburgh,greenhouse
+Zeitview,Software Development,501-1000,Santa Monica,greenhouse
+Arcadia,Software Development,501-1000,Greenwood Village,greenhouse
+Forter,"Technology, Information and Internet",501-1000,New York,greenhouse
+Quanterix,Biotechnology Research,201-500,Billerica,greenhouse
+Lucid Software,Software Development,1001-5000,South Jordan,greenhouse
+Sigma Computing,Software Development,501-1000,San Francisco,greenhouse
+Stitch Fix,Retail Apparel and Fashion,"5001-10,000",San Francisco,greenhouse
+Collective Health,Software Development,501-1000,San Francisco,greenhouse
+Teneo,Business Consulting and Services,1001-5000,New York City,greenhouse
+EliseAI,Software Development,51-200,New York,greenhouse
+Udacity,E-Learning Providers,1001-5000,Mountain View,greenhouse
+K Health,Hospitals and Health Care,201-500,New York,greenhouse
+Campus,Higher Education,501-1000,New York,greenhouse
+Narvar,"Technology, Information and Internet",201-500,San Mateo,greenhouse
+Guidepoint,Information Services,1001-5000,New York,greenhouse
+Away,Retail,501-1000,New York,greenhouse
+Everlaw,Software Development,201-500,Oakland,greenhouse
+Dataminr,"Technology, Information and Internet",501-1000,New York,greenhouse
+Maven Clinic,Hospitals and Health Care,501-1000,New York,greenhouse
+Golin,Public Relations and Communications Services,1001-5000,Chicago,greenhouse
+Hazel Health,Hospitals and Health Care,201-500,San Francisco,greenhouse
+Acceleration Partners,Advertising Services,201-500,Boston,greenhouse
+Better,Financial Services,1001-5000,New York,greenhouse
+Lincoln International,Investment Banking,1001-5000,Chicago,greenhouse
+Revel,Urban Transit Services,201-500,Brooklyn,greenhouse
+Misfits Market,Food and Beverage Services,501-1000,Delanco,greenhouse
+NexHealth,Software Development,201-500,San Francisco,greenhouse
+Thunder,IT Services and IT Consulting,201-500,San Francisco,greenhouse
+Flock Freight,"Transportation, Logistics, Supply Chain and Storage",501-1000,Encinitas,greenhouse
+Alto Pharmacy,Hospitals and Health Care,501-1000,San Francisco,greenhouse
+Honor,Hospitals and Health Care,1001-5000,San Francisco,greenhouse
+"IMA Financial Group, Inc.",Insurance,1001-5000,Denver,greenhouse
+Udemy,E-Learning Providers,"5001-10,000",San Francisco,greenhouse
+Pilot,Telecommunications,201-500,New York,greenhouse
+2K Vegas,Computer Games,1001-5000,Las Vegas,greenhouse
+Fetch,"Technology, Information and Internet",1001-5000,Hybrid-remote workplace,greenhouse
+Breeze Airways™,Airlines and Aviation,1001-5000,Salt Lake City,greenhouse
+Mobile Anesthesiologists,Medical Practices,51-200,Downers Grove,greenhouse
+Degreed,Software Development,501-1000,Pleasanton,greenhouse
+Redesign Health,Hospitals and Health Care,201-500,New York,greenhouse
+Central California Alliance for Health,Hospitals and Health Care,501-1000,Scotts Valley,greenhouse
+CB Insights,"Technology, Information and Internet",201-500,New York,greenhouse
+Pine Gate Renewables,Renewable Energy Power Generation,201-500,Asheville,greenhouse
+2U,Education Administration Programs,1001-5000,Arlington,greenhouse
+project44,Software Development,1001-5000,Chicago,greenhouse
+Bungie,Entertainment Providers,1001-5000,Bellevue,greenhouse
+Vox Media,Online Audio and Video Media,"10,000+",Washington,greenhouse
+HomeLight,Real Estate,501-1000,San Francisco,greenhouse
+Entera,Real Estate,51-200,New York,greenhouse
+Dollar Shave Club,Manufacturing,201-500,Marina Del Rey,greenhouse
+Shearer's Foods,Food and Beverage Manufacturing,1001-5000,Massillon,greenhouse
+Otterbein SeniorLife,Hospitals and Health Care,501-1000,Lebanon,greenhouse
+General Assembly,Animation and Post-production,1001-5000,Los Angeles,greenhouse
+Thirty Madison,Hospitals and Health Care,501-1000,New York,greenhouse
+Seamless.AI,Software Development,201-500,Columbus,greenhouse
+Foundation,Housing and Community Development,51-200,Syracuse,greenhouse
+Forward,Staffing and Recruiting,1001-5000,San Francisco,greenhouse
+Modern Health,Mental Health Care,501-1000,San Francisco,greenhouse
+Overjet,Software Development,201-500,Boston,greenhouse
+Level,Human Resources Services,11-50,Dublin,greenhouse
+Ingenuity Prep,Primary and Secondary Education,51-200,Washington,greenhouse
+Nas Company,Software Development,51-200,New York,greenhouse
+NextRoll,Marketing Services,501-1000,San Francisco,greenhouse
+Unqork,Software Development,201-500,New York,greenhouse
+CareRev,"Technology, Information and Internet",501-1000,Los Angeles,greenhouse
+AssemblyAI,Software Development,51-200,San Francisco,greenhouse
+Lunchbox,IT Services and IT Consulting,51-200,New York,greenhouse
+Point Digital Finance,Real Estate,51-200,Palo Alto,greenhouse
+Golden Hippo®,Advertising Services,501-1000,Woodland Hills ,greenhouse
+Foundation Academies,Education,51-200,Trenton,greenhouse
+Astranis,Defense and Space Manufacturing,201-500,San Francisco,greenhouse
+Techstars,Venture Capital and Private Equity Principals,1001-5000,New York City,greenhouse
+PMG,Advertising Services,1001-5000,Dallas,greenhouse
+WONGDOODY,Design Services,1001-5000,Seattle,greenhouse
+Knock,Real Estate,51-200,New York,greenhouse
+M Booth,Public Relations and Communications Services,201-500,New York,greenhouse
+All Turtles,Hospitals and Health Care,51-200,San Francisco,greenhouse
+CreativeX,Internet Publishing,51-200,New York,greenhouse
+Boosted Commerce,Retail,51-200,Los Angeles,greenhouse
+ROLLER,Software Development,201-500,Austin,greenhouse
+Expa,"Technology, Information and Internet",51-200,San Francisco,greenhouse

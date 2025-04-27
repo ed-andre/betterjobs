@@ -1,0 +1,117 @@
+project-scope-internal.md
+repo-structure-internal.md
+.venv
+/pipeline/.venv
+.env
+/pipeline/.env
+secrets.toml
+/pipeline/dlt_sources/.dlt/secrets.toml
+trendeez-fe5abc65a250.json
+.tmp_dagster_home_kb0fso5m
+dagster_trendeez.egg-info
+
+# DBT
+target/
+dbt_packages/
+logs/
+.user.yml
+profiles.yml
+
+# Dagster
+.dagster/
+tmp/
+out/
+.tmp*
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.vscode
+docs/setup-guide-internal.md
+song_lyrics.csv
+.cursor/mcp.json
+companies_using_workday_p11.json
+companies_using_workday_p1.json
+companies_using_bamboohr_p4.json
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Local development settings
+.env
+.envrc
+*.env
+
+# Database files
+*.db
+*.sqlite3
+*.sqlite
+
+# Logs
+logs/
+*.log
+
+# IDE specific files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS specific files
+.DS_Store
+Thumbs.db
+
+# Dagster specific
+dagster_home/
+dagster.yaml
+.telemetry
