@@ -13,7 +13,6 @@ from dagster_betterjobs.schedules import daily_job_scrape_schedule
 
 
 # Load all assets including:
-# - General URL discovery assets (company_urls, retry_failed_company_urls)
 # - Platform-specific assets (workday_company_urls, greenhouse_company_urls, bamboohr_company_urls, etc.)
 # - Job scraping assets
 all_assets = load_assets_from_modules([assets])
