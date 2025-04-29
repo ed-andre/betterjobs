@@ -32,32 +32,30 @@ def process_icims_companies(
     prompt = f"""
     Find accurate job board URLs for the following companies that use iCIMS as their ATS (Applicant Tracking System).
 
-    IMPORTANT: iCIMS job board URLs follow this specific pattern:
-    https://[tenant].icims.com/jobs/
+    IMPORTANT: iCIMS job board URLs most often follow one of these patterns:
+    - https://careers-[tenant].icims.com/
+    - https://jobs-[tenant].icims.com/
+    Less commonly, you may see:
+    - https://[tenant].icims.com/jobs/
+    However, this last format often redirects to a login page (login.icims.com) and is not a valid public job board URL.
 
     For example:
-    - Example Company: https://examplecompany.icims.com/jobs/
-    - Tech Company: https://techcompany.icims.com/jobs/
+    - Example Company: https://careers-examplecompany.icims.com/
+    - Tech Company: https://jobs-techcompany.icims.com/
 
-    The key is to identify the correct tenant name, which is usually a simplified version
-    of the company name (lowercase, no spaces, no special characters).
+    The key is to identify the correct tenant name, which is usually a simplified version of the company name (lowercase, no spaces, no special characters).
 
-    Some companies may use:
-    - Careers.[company].com that redirects to an iCIMS portal
-    - jobs.[company].com that uses iCIMS integration
-    - Variations like careers-icims.[company].com
-
-    DO NOT guess or invent URLs. Only return a URL if you are CERTAIN it exists. It's better to return null than an incorrect URL.
+    DO NOT guess or invent URLs. Only return a URL if you are CERTAIN it exists and does not redirect to login.icims.com. It's better to return null than an incorrect or login-only URL.
 
     For each company, I need:
-    1. ATS_URL: The specific iCIMS job board URL (following the pattern above)
+    1. ATS_URL: The specific iCIMS job board URL (following the patterns above)
     2. CAREER_URL: Direct URL to their own company careers/jobs page
 
     Return your results as a valid JSON array with this exact structure:
     [
       {{
         "company_name": "Example Inc.",
-        "ats_url": "https://exampleinc.icims.com/jobs/",
+        "ats_url": "https://careers-exampleinc.icims.com/",
         "career_url": "https://example.com/careers"
       }},
       {{
@@ -86,7 +84,18 @@ def process_icims_companies(
                 context.log.info(f"Received response from Gemini in {elapsed_time:.2f} seconds")
 
                 # Parse response and extract URLs
-                return parse_gemini_response(context, response.text, companies)
+                results = parse_gemini_response(context, response.text, companies)
+
+                # Ensure platform is set to icims for all companies with icims URLs
+                for result in results:
+                    if result.get("ats_url") and "icims.com" in result.get("ats_url", "").lower():
+                        result["platform"] = "icims"
+                    else:
+                        # Only assign platform if not already set
+                        if "platform" not in result:
+                            result["platform"] = "icims"
+
+                return results
 
         except Exception as e:
             context.log.error(f"Error processing iCIMS companies (attempt {attempt+1}): {str(e)}")

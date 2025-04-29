@@ -37,6 +37,7 @@ def process_workday_companies(
 
     For example:
     - CoStar: https://costar.wd1.myworkdayjobs.com/en-US/CoStarCareers
+    - Surescripts: https://surescripts.wd1.myworkdayjobs.com/en-US/surescriptscareers
     - TBK Bank: https://tbkbank.wd1.myworkdayjobs.com/en-US/tpay
     - Go Limitless: https://golimitless.wd1.myworkdayjobs.com/en-US/Staff_External_career_site
 
@@ -82,7 +83,18 @@ def process_workday_companies(
                 context.log.info(f"Received response from Gemini in {elapsed_time:.2f} seconds")
 
                 # Parse response and extract URLs
-                return parse_gemini_response(context, response.text, companies)
+                results = parse_gemini_response(context, response.text, companies)
+
+                # Ensure platform is set to workday for all companies with workday URLs
+                for result in results:
+                    if result.get("ats_url") and "workday.com" in result.get("ats_url", "").lower():
+                        result["platform"] = "workday"
+                    else:
+                        # Only assign platform if not already set
+                        if "platform" not in result:
+                            result["platform"] = "workday"
+
+                return results
 
         except Exception as e:
             context.log.error(f"Error processing Workday companies (attempt {attempt+1}): {str(e)}")

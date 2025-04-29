@@ -33,7 +33,7 @@ def process_bamboohr_companies(
     Find accurate job board URLs for the following companies that use BambooHR as their ATS (Applicant Tracking System).
 
     IMPORTANT: BambooHR job board URLs follow this specific pattern:
-    https://[tenant].bamboohr.com/careers
+    - https://[tenant].bamboohr.com/careers
 
     For example:
     - Example Company: https://examplecompany.bamboohr.com/careers
@@ -57,8 +57,13 @@ def process_bamboohr_companies(
       }},
       {{
         "company_name": "Another Company",
-        "ats_url": null,
+        "ats_url": "https://anothercompany.bamboohr.com/careers",
         "career_url": "https://anothercompany.com/jobs"
+      }},
+      {{
+        "company_name": "Third Company",
+        "ats_url": null,
+        "career_url": "https://thirdcompany.com/jobs"
       }}
     ]
 
@@ -81,7 +86,18 @@ def process_bamboohr_companies(
                 context.log.info(f"Received response from Gemini in {elapsed_time:.2f} seconds")
 
                 # Parse response and extract URLs
-                return parse_gemini_response(context, response.text, companies)
+                results = parse_gemini_response(context, response.text, companies)
+
+                # Ensure platform is set to bamboohr for all companies with bamboohr URLs
+                for result in results:
+                    if result.get("ats_url") and "bamboohr.com" in result.get("ats_url", "").lower():
+                        result["platform"] = "bamboohr"
+                    else:
+                        # Only assign platform if not already set
+                        if "platform" not in result:
+                            result["platform"] = "bamboohr"
+
+                return results
 
         except Exception as e:
             context.log.error(f"Error processing BambooHR companies (attempt {attempt+1}): {str(e)}")

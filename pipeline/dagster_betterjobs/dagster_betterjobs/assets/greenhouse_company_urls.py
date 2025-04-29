@@ -33,14 +33,13 @@ def process_greenhouse_companies(
     Find accurate job board URLs for the following companies that use Greenhouse as their ATS (Applicant Tracking System).
 
     IMPORTANT: Greenhouse job board URLs follow one of these specific patterns:
-    - https://job-boards.greenhouse.io/[tenant]/jobs/
-    - https://boards.greenhouse.io/[tenant]/jobs/
+    - https://boards.greenhouse.io/[tenant]/
     - https://boards.greenhouse.io/embed/job_board?for=[tenant]
 
     For example:
     - Instacart: https://boards.greenhouse.io/embed/job_board?for=Instacart
     - Dropbox: https://boards.greenhouse.io/embed/job_board?for=dropbox
-    - Other companies may use direct tenant URLs like: https://boards.greenhouse.io/company/jobs/
+    - Ceribell, Inc: https://boards.greenhouse.io/ceribell/
 
     The key is to identify the correct tenant ID in the URL, which is usually
     a simplified version of the company name (lowercase, no spaces).
@@ -58,7 +57,7 @@ def process_greenhouse_companies(
     [
       {{
         "company_name": "Example Inc.",
-        "ats_url": "https://boards.greenhouse.io/exampleinc/jobs/",
+        "ats_url": "https://boards.greenhouse.io/exampleinc/",
         "career_url": "https://example.com/careers"
       }},
       {{
@@ -92,7 +91,18 @@ def process_greenhouse_companies(
                 context.log.info(f"Received response from Gemini in {elapsed_time:.2f} seconds")
 
                 # Parse response and extract URLs
-                return parse_gemini_response(context, response.text, companies)
+                results = parse_gemini_response(context, response.text, companies)
+
+                # Ensure platform is set to greenhouse for all companies with greenhouse URLs
+                for result in results:
+                    if result.get("ats_url") and "greenhouse.io" in result.get("ats_url", "").lower():
+                        result["platform"] = "greenhouse"
+                    else:
+                        # Only assign platform if not already set
+                        if "platform" not in result:
+                            result["platform"] = "greenhouse"
+
+                return results
 
         except Exception as e:
             context.log.error(f"Error processing Greenhouse companies (attempt {attempt+1}): {str(e)}")
@@ -117,7 +127,7 @@ def greenhouse_company_urls(context: AssetExecutionContext, gemini: GeminiResour
     This asset focuses exclusively on companies using Greenhouse ATS to find their job board URLs
     following the patterns:
     - https://job-boards.greenhouse.io/[tenant]/jobs/
-    - https://boards.greenhouse.io/[tenant]/jobs/
+    - https://boards.greenhouse.io/[tenant]/
     """
     # Get data source directory with proper path handling
     cwd = Path(os.getcwd())
@@ -307,14 +317,16 @@ def retry_failed_greenhouse_company_urls(context: AssetExecutionContext, gemini:
     Retries finding career URLs for Greenhouse companies that failed verification.
 
     This asset pulls companies with url_verified=FALSE from the database,
-    processes them with a more conservative approach using individual processing,
-    and handles cases where a company might have switched to a different ATS.
+    first checks if verified URLs exist in other ATS tables,
+    and only makes Gemini API calls for companies without existing verified records.
     """
     cwd = Path(os.getcwd())
     if cwd.name == "dagster_betterjobs" and "pipeline" in str(cwd):
         checkpoint_dir = Path("dagster_betterjobs/checkpoints")
+        db_path = Path("dagster_betterjobs/db/betterjobs.db")
     else:
         checkpoint_dir = Path("pipeline/dagster_betterjobs/dagster_betterjobs/checkpoints")
+        db_path = Path("pipeline/dagster_betterjobs/dagster_betterjobs/db/betterjobs.db")
 
     # Create checkpoint directory if it doesn't exist
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -333,11 +345,20 @@ def retry_failed_greenhouse_company_urls(context: AssetExecutionContext, gemini:
         WHERE url_verified = FALSE
         """
 
-        # Run the query using duckdb connection
+        # Use DUCKDB_PATH environment variable with fallback to default path
         import duckdb
-        conn = duckdb.connect(database=os.getenv("DUCKDB_DATABASE", "db/betterjobs.db"))
+        db_path = os.getenv("DUCKDB_PATH")
+        context.log.info(f"DUCKDB_PATH: {db_path}")
+        if not db_path:
+            # Fallback to default path if env var is not set
+            if cwd.name == "dagster_betterjobs" and "pipeline" in str(cwd):
+                db_path = str(Path("dagster_betterjobs/db/betterjobs.db"))
+            else:
+                db_path = str(Path("pipeline/dagster_betterjobs/dagster_betterjobs/db/betterjobs.db"))
+
+        context.log.info(f"Connecting to database at: {db_path}")
+        conn = duckdb.connect(database=db_path)
         unverified_df = conn.execute(sql).fetchdf()
-        conn.close()
 
         failed_companies = unverified_df.to_dict("records")
         context.log.info(f"Found {len(failed_companies)} Greenhouse companies with unverified URLs to retry")
@@ -364,25 +385,79 @@ def retry_failed_greenhouse_company_urls(context: AssetExecutionContext, gemini:
         except Exception as e:
             context.log.error(f"Error loading ATS switched companies: {str(e)}")
 
-    # List of common ATS platforms to try if Greenhouse fails
-    alternative_platforms = ["lever", "workday", "bamboohr", "jobvite", "icims", "smartrecruiters"]
+    # List of ATS tables to check
+    ats_tables = [
+        "bamboohr_company_urls",
+        "icims_company_urls",
+        "jobvite_company_urls",
+        "lever_company_urls",
+        "smartrecruiters_company_urls",
+        "workday_company_urls"
+    ]
 
     for company in failed_companies:
-        context.log.info(f"Retrying company: {company['company_name']}")
+        company_name = company["company_name"]
+        context.log.info(f"Processing company: {company_name}")
 
-        # First try with Greenhouse
+        # First check if we already have verified URLs for this company in any other ATS table
+        found_verified = False
+        try:
+            for table in ats_tables:
+                platform = table.split("_")[0]  # Extract platform name from table name
+
+                # Query to check if verified record exists for this company in another ATS table
+                check_sql = f"""
+                SELECT company_name, company_industry, platform, ats_url, career_url, url_verified
+                FROM public.{table}
+                WHERE company_name = ? AND url_verified = TRUE
+                LIMIT 1
+                """
+
+                verified_records = conn.execute(check_sql, [company_name]).fetchdf()
+
+                if not verified_records.empty:
+                    verified_record = verified_records.to_dict("records")[0]
+                    context.log.info(f"Found existing verified record for {company_name} in {table}")
+
+                    # Add to results
+                    results.append(verified_record)
+
+                    # Track the company that switched ATS
+                    switched_entry = verified_record.copy()
+                    switched_entry["original_platform"] = "greenhouse"
+                    switched_entry["new_platform"] = platform
+
+                    # Only add if not already in the list
+                    if not any(s.get("company_name") == company_name for s in ats_switched_companies):
+                        ats_switched_companies.append(switched_entry)
+
+                        # Save updated switched companies list
+                        pd.DataFrame(ats_switched_companies).to_csv(url_discovery_checkpoint, index=False)
+                        context.log.info(f"Updated ATS switched companies list with {company_name}")
+
+                    found_verified = True
+                    break
+
+            if found_verified:
+                continue  # Skip to the next company
+
+        except Exception as e:
+            context.log.error(f"Error checking existing records for {company_name}: {str(e)}")
+            context.log.error(traceback.format_exc())
+
+        # If no verified record was found, try with Greenhouse first
         try:
             urls = find_company_urls_individual(
                 context=context,
                 gemini=gemini,
-                company_name=company["company_name"],
+                company_name=company_name,
                 company_industry=company["company_industry"],
                 platform="greenhouse",
                 max_retries=2
             )
 
             result = {
-                "company_name": company["company_name"],
+                "company_name": company_name,
                 "company_industry": company["company_industry"],
                 "platform": "greenhouse",
                 "ats_url": urls.get("ats_url"),
@@ -399,22 +474,25 @@ def retry_failed_greenhouse_company_urls(context: AssetExecutionContext, gemini:
                 continue
 
             # If Greenhouse didn't work, try alternative platforms
-            context.log.info(f"Could not verify Greenhouse URLs for {company['company_name']}, trying alternative ATS platforms")
+            context.log.info(f"Could not verify Greenhouse URLs for {company_name}, trying alternative ATS platforms")
+
+            # List of common ATS platforms to try if Greenhouse fails
+            alternative_platforms = ["lever", "workday", "bamboohr", "jobvite", "icims", "smartrecruiters"]
 
             for alt_platform in alternative_platforms:
-                context.log.info(f"Trying {alt_platform} for {company['company_name']}")
+                context.log.info(f"Trying {alt_platform} for {company_name}")
 
                 alt_urls = find_company_urls_individual(
                     context=context,
                     gemini=gemini,
-                    company_name=company["company_name"],
+                    company_name=company_name,
                     company_industry=company["company_industry"],
                     platform=alt_platform,
                     max_retries=2
                 )
 
                 alt_result = {
-                    "company_name": company["company_name"],
+                    "company_name": company_name,
                     "company_industry": company["company_industry"],
                     "platform": alt_platform,
                     "ats_url": alt_urls.get("ats_url"),
@@ -427,7 +505,7 @@ def retry_failed_greenhouse_company_urls(context: AssetExecutionContext, gemini:
 
                 # If alternative platform URLs were verified successfully
                 if alt_validated and alt_validated[0].get("url_verified", False):
-                    context.log.info(f"Found verified URLs for {company['company_name']} using {alt_platform} instead of Greenhouse")
+                    context.log.info(f"Found verified URLs for {company_name} using {alt_platform} instead of Greenhouse")
 
                     # Add to results
                     results.append(alt_validated[0])
@@ -440,13 +518,13 @@ def retry_failed_greenhouse_company_urls(context: AssetExecutionContext, gemini:
 
                     # Save updated switched companies list
                     pd.DataFrame(ats_switched_companies).to_csv(url_discovery_checkpoint, index=False)
-                    context.log.info(f"Updated ATS switched companies list with {company['company_name']}")
+                    context.log.info(f"Updated ATS switched companies list with {company_name}")
 
                     # Break out of the alternative platforms loop
                     break
 
             # If we couldn't verify with any platform, add the original result
-            if not any(r.get("company_name") == company["company_name"] for r in results):
+            if not any(r.get("company_name") == company_name for r in results):
                 if validated_results:
                     results.append(validated_results[0])
                 else:
@@ -456,12 +534,12 @@ def retry_failed_greenhouse_company_urls(context: AssetExecutionContext, gemini:
             time.sleep(2)
 
         except Exception as e:
-            context.log.error(f"Error processing {company['company_name']}: {str(e)}")
+            context.log.error(f"Error processing {company_name}: {str(e)}")
             context.log.error(traceback.format_exc())
 
             # Add the company with error information
             results.append({
-                "company_name": company["company_name"],
+                "company_name": company_name,
                 "company_industry": company["company_industry"],
                 "platform": "greenhouse",
                 "ats_url": None,
@@ -469,6 +547,9 @@ def retry_failed_greenhouse_company_urls(context: AssetExecutionContext, gemini:
                 "url_verified": False,
                 "error": str(e)
             })
+
+    # Close the database connection
+    conn.close()
 
     # Return the results
     if not results:
