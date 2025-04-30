@@ -163,11 +163,14 @@ def validate_urls(context: AssetExecutionContext, companies: List[Dict]) -> List
                             final_url.lower() in [
                                 "https://www.jobvite.com/",
                                 "https://jobvite.com/",
-                                "https://www.jobvite.com/support/"
+                                "https://www.jobvite.com/support/",
+                                "https://app.jobvite.com/admin/info/404.html",
+                                "https://app.jobvite.com/"
                             ]
                             or "jobs.jobvite.com/error" in final_url.lower()
                             or "/support/" in final_url.lower()
                             or "/job-seeker-support" in final_url.lower()
+                            or "/admin/info/404.html" in final_url.lower()
                         ):
                             context.log.warning(
                                 f"Jobvite URL for {company_name} redirects to generic or support page: {ats_url} → {final_url}"
@@ -178,7 +181,11 @@ def validate_urls(context: AssetExecutionContext, companies: List[Dict]) -> List
                     # Handle SmartRecruiters redirects
                     elif ats_platform == "smartrecruiters" and "smartrecruiters" in ats_url.lower():
                         # If redirected to the main SmartRecruiters site or a login page
-                        if final_url.lower() in ["https://www.smartrecruiters.com/", "https://smartrecruiters.com/"] or "login" in final_url.lower():
+                        if final_url.lower() in [
+                            "https://www.smartrecruiters.com/",
+                            "https://smartrecruiters.com/",
+                            "https://jobs.smartrecruiters.com/"
+                            ] or "login" in final_url.lower():
                             context.log.warning(
                                 f"SmartRecruiters URL for {company_name} redirects to generic page: {ats_url} → {final_url}"
                             )

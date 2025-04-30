@@ -14,6 +14,7 @@ from dagster_gemini import GeminiResource
 
 from .url_discovery import find_company_urls_individual, parse_gemini_response
 from .validate_urls import validate_urls
+from .retry_failed_company_urls import retry_failed_company_urls
 
 logger = get_dagster_logger()
 
@@ -310,86 +311,13 @@ def smartrecruiters_company_urls(context: AssetExecutionContext, gemini: GeminiR
 def retry_failed_smartrecruiters_company_urls(context: AssetExecutionContext, gemini: GeminiResource) -> pd.DataFrame:
     """
     Retry processing failed companies from the smartrecruiters_company_urls asset.
-
-    This asset attempts to discover URLs for companies that failed in the initial processing,
-    using an individual processing approach that might succeed where batch processing failed.
+    Uses the generic retry function with SmartRecruiters-specific configuration.
     """
-    # Get data source directory with proper path handling
-    cwd = Path(os.getcwd())
-    if cwd.name == "dagster_betterjobs" and "pipeline" in str(cwd):
-        # If we're already in pipeline/dagster_betterjobs
-        checkpoint_dir = Path("dagster_betterjobs/checkpoints")
-    else:
-        # Otherwise use the full path
-        checkpoint_dir = Path("pipeline/dagster_betterjobs/dagster_betterjobs/checkpoints")
 
-    # Check for failed companies file
-    failed_companies_file = checkpoint_dir / "smartrecruiters_url_discovery_failed.csv"
 
-    if not failed_companies_file.exists():
-        context.log.info("No failed companies file found, nothing to retry")
-        return pd.DataFrame(columns=["company_name", "company_industry", "platform", "ats_url", "career_url", "url_verified"])
-
-    try:
-        failed_companies_df = pd.read_csv(failed_companies_file)
-        context.log.info(f"Found {len(failed_companies_df)} failed companies to retry")
-    except Exception as e:
-        context.log.error(f"Error loading failed companies: {str(e)}")
-        return pd.DataFrame(columns=["company_name", "company_industry", "platform", "ats_url", "career_url", "url_verified"])
-
-    if len(failed_companies_df) == 0:
-        context.log.info("No failed companies to retry")
-        return pd.DataFrame(columns=["company_name", "company_industry", "platform", "ats_url", "career_url", "url_verified"])
-
-    # Process each failed company individually
-    successful_retries = []
-
-    for _, company in failed_companies_df.iterrows():
-        try:
-            context.log.info(f"Retrying company: {company['company_name']}")
-
-            # Use individual processing with more retries
-            result = find_company_urls_individual(
-                context,
-                gemini,
-                company["company_name"],
-                company.get("company_industry", "Unknown"),
-                "smartrecruiters",
-                max_retries=3,
-                retry_delay=3
-            )
-
-            # Add to successful retries if we found an ATS URL
-            if result and result.get("ats_url"):
-                company_result = {
-                    "company_name": company["company_name"],
-                    "company_industry": company.get("company_industry", "Unknown"),
-                    "platform": "smartrecruiters",
-                    "ats_url": result.get("ats_url"),
-                    "career_url": result.get("career_url"),
-                    "url_verified": False
-                }
-
-                # Validate the URLs
-                validated_results = validate_urls(context, [company_result])
-                if validated_results:
-                    successful_retries.append(validated_results[0])
-                else:
-                    successful_retries.append(company_result)
-
-                context.log.info(f"Successfully found smartrecruiters URL for {company['company_name']}")
-            else:
-                context.log.info(f"Still unable to find smartrecruiters URL for {company['company_name']}")
-
-        except Exception as e:
-            context.log.error(f"Error retrying company {company['company_name']}: {str(e)}")
-
-    # Create DataFrame from successful retries
-    retry_results = pd.DataFrame(successful_retries)
-
-    if len(retry_results) == 0:
-        context.log.info("No companies were successfully retried")
-        return pd.DataFrame(columns=["company_name", "company_industry", "platform", "ats_url", "career_url", "url_verified"])
-
-    context.log.info(f"Successfully retried {len(retry_results)} companies")
-    return retry_results
+    return retry_failed_company_urls(
+        context=context,
+        gemini=gemini,
+        ats_platform="smartrecruiters",
+        table_name="smartrecruiters_company_urls"
+    )

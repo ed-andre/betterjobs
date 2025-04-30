@@ -584,17 +584,3 @@ def find_company_urls_individual(
 
     return {"ats_url": None, "career_url": None}
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-

@@ -16,6 +16,9 @@ from dagster_gemini import GeminiResource
 from .url_discovery import find_company_urls_individual, parse_gemini_response
 from .validate_urls import validate_urls
 
+from .retry_failed_company_urls import retry_failed_company_urls
+
+
 logger = get_dagster_logger()
 
 def process_workday_companies(
@@ -305,84 +308,14 @@ def workday_company_urls(context: AssetExecutionContext, gemini: GeminiResource)
 )
 def retry_failed_workday_company_urls(context: AssetExecutionContext, gemini: GeminiResource) -> pd.DataFrame:
     """
-    Retries finding career URLs for Workday companies that previously failed.
-
-    This asset processes the failed companies with a more conservative approach,
-    using individual processing and additional retries.
+    Retries finding career URLs for Workday companies that failed verification.
+    Uses the generic retry function with Workday-specific configuration.
     """
-    cwd = Path(os.getcwd())
-    if cwd.name == "dagster_betterjobs" and "pipeline" in str(cwd):
-        checkpoint_dir = Path("dagster_betterjobs/checkpoints")
-    else:
-        checkpoint_dir = Path("pipeline/dagster_betterjobs/dagster_betterjobs/checkpoints")
 
-    failed_companies_file = checkpoint_dir / "workday_url_discovery_failed.csv"
 
-    if not failed_companies_file.exists():
-        context.log.info("No failed Workday companies file found")
-        return pd.DataFrame(columns=["company_name", "company_industry", "platform", "ats_url", "career_url", "url_verified"])
-
-    try:
-        failed_df = pd.read_csv(failed_companies_file)
-        failed_companies = failed_df.to_dict("records")
-        context.log.info(f"Found {len(failed_companies)} failed Workday companies to retry")
-    except Exception as e:
-        context.log.error(f"Error reading failed companies file: {str(e)}")
-        return pd.DataFrame(columns=["company_name", "company_industry", "platform", "ats_url", "career_url", "url_verified"])
-
-    if not failed_companies:
-        return pd.DataFrame(columns=["company_name", "company_industry", "platform", "ats_url", "career_url", "url_verified"])
-
-    # Process failed companies individually with additional safeguards
-    results = []
-    still_failed = []
-
-    for company in failed_companies:
-        try:
-            context.log.info(f"Retrying Workday company: {company['company_name']}")
-            urls = find_company_urls_individual(
-                context=context,
-                gemini=gemini,
-                company_name=company["company_name"],
-                company_industry=company["company_industry"],
-                platform="workday",  # Ensure platform is set correctly
-                max_retries=3  # More retries for failed companies
-            )
-
-            result = {
-                "company_name": company["company_name"],
-                "company_industry": company["company_industry"],
-                "platform": "workday",
-                "ats_url": urls.get("ats_url"),
-                "career_url": urls.get("career_url"),
-                "url_verified": False
-            }
-
-            # Validate the URLs
-            validated_results = validate_urls(context, [result])
-            if validated_results:
-                results.append(validated_results[0])
-            else:
-                results.append(result)
-
-            time.sleep(2)  # Longer pause between requests
-
-        except Exception as e:
-            context.log.error(f"Still failed for Workday company {company['company_name']}: {str(e)}")
-            company["error"] = str(e)
-            still_failed.append(company)
-
-    # Update the failed companies file with only those that still failed
-    if still_failed:
-        pd.DataFrame(still_failed).to_csv(failed_companies_file, index=False)
-        context.log.info(f"Updated failed companies file with {len(still_failed)} remaining failures")
-    else:
-        # If all were successful, remove the failed companies file
-        failed_companies_file.unlink(missing_ok=True)
-        context.log.info("All failed Workday companies successfully processed, removed failed companies file")
-
-    # Return the successfully processed results
-    if not results:
-        return pd.DataFrame(columns=["company_name", "company_industry", "platform", "ats_url", "career_url", "url_verified"])
-
-    return pd.DataFrame(results)
+    return retry_failed_company_urls(
+        context=context,
+        gemini=gemini,
+        ats_platform="workday",
+        table_name="workday_company_urls"
+    )
