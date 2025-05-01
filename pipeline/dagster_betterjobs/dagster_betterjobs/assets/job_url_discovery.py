@@ -9,12 +9,12 @@ from dagster import asset, AssetExecutionContext, get_dagster_logger
 logger = get_dagster_logger()
 
 @asset(
-    group_name="url_discovery",
+    group_name="job_url_discovery",
     compute_kind="python",
     io_manager_key="duckdb",
     deps=["raw_job_listings", "initialize_db"]
 )
-def job_url_discovery(context: AssetExecutionContext) -> pd.DataFrame:
+def raw_job_url_discovery(context: AssetExecutionContext) -> pd.DataFrame:
     """
     Discovers and verifies job URLs based on company and job title.
 

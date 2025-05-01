@@ -122,6 +122,10 @@ def workday_company_urls(context: AssetExecutionContext, gemini: GeminiResource)
 
     This asset focuses exclusively on companies using Workday ATS to find their job board URLs
     following the pattern: https://[tenant].wd1.myworkdayjobs.com/[locale]/[site-name]
+
+    Before processing any company, it checks if the company already exists in the master_company_urls
+    table to avoid redundant processing. Companies that already exist in the master table will be
+    skipped unless they are explicitly reprocessed through a full rerun .
     """
     # Get data source directory with proper path handling
     cwd = Path(os.getcwd())
@@ -182,6 +186,37 @@ def workday_company_urls(context: AssetExecutionContext, gemini: GeminiResource)
         return pd.DataFrame(columns=["company_name", "company_industry", "platform", "ats_url", "career_url", "url_verified"])
 
     context.log.info(f"Loaded {len(all_companies)} Workday companies from CSV files")
+
+    # Check master_company_urls table for existing companies
+    try:
+        with context.resources.duckdb_resource.get_connection() as conn:
+            # Check if master_company_urls table exists
+            table_exists = conn.execute("""
+                SELECT name
+                FROM sqlite_master
+                WHERE type='table'
+                AND name='master_company_urls'
+            """).fetchone()
+
+            if table_exists:
+                # Get list of companies already in master table
+                existing_companies_query = """
+                SELECT company_name
+                FROM public.master_company_urls
+                """
+                existing_df = conn.execute(existing_companies_query).df()
+                existing_companies = set(existing_df["company_name"])
+
+                # Filter out companies that already exist in master table
+                original_count = len(all_companies)
+                all_companies = [c for c in all_companies if c["company_name"] not in existing_companies]
+                skipped_count = original_count - len(all_companies)
+
+                context.log.info(f"Skipped {skipped_count} companies that already exist in master_company_urls table")
+                if skipped_count > 0:
+                    context.log.info(f"Processing {len(all_companies)} new companies")
+    except Exception as e:
+        context.log.info(f"Could not check master_company_urls table, will process all companies: {str(e)}")
 
     # Load previously processed companies if checkpoint exists
     processed_companies: Set[str] = set()

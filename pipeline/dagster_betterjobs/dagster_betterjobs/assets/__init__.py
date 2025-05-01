@@ -11,7 +11,7 @@ from dagster_betterjobs.assets.db_setup import initialize_db
 
 from dagster_betterjobs.assets.job_scraping import scrape_jobs, job_search_results
 from dagster_betterjobs.assets.load_raw_jobs import raw_job_listings
-from dagster_betterjobs.assets.job_url_discovery import job_url_discovery
+from dagster_betterjobs.assets.job_url_discovery import raw_job_url_discovery
 
 __all__ = [
     "retry_failed_company_urls",
@@ -35,5 +35,5 @@ __all__ = [
     "scrape_jobs",
     "job_search_results",
     "raw_job_listings",
-    "job_url_discovery"
+    "raw_job_url_discovery"
 ]
