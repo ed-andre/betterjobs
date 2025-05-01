@@ -62,3 +62,10 @@ full_url_discovery_job = define_asset_job(
     selection=AssetSelection.groups("url_discovery"),
     description="Job that discovers URLs for all companies across all ATS platforms"
 )
+
+# Define a job for maintaining the master company URLs table
+master_company_urls_job = define_asset_job(
+    name="master_company_urls_job",
+    selection=AssetSelection.assets("master_company_urls"),
+    description="Job that maintains the master table of all company URLs"
+)

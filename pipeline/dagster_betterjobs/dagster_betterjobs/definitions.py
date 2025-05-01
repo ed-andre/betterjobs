@@ -8,7 +8,18 @@ import os
 from dagster_betterjobs import assets  # noqa: TID252
 from dagster_betterjobs.assets.job_scraping import JobScrapingConfig, JobSearchConfig
 from dagster_betterjobs.io import BetterJobsIOManager
-from dagster_betterjobs.jobs import job_scraping_job, workday_url_discovery_job, greenhouse_url_discovery_job, bamboohr_url_discovery_job, icims_url_discovery_job, jobvite_url_discovery_job, lever_url_discovery_job, smartrecruiters_url_discovery_job, full_url_discovery_job
+from dagster_betterjobs.jobs import (
+    job_scraping_job,
+    workday_url_discovery_job,
+    greenhouse_url_discovery_job,
+    bamboohr_url_discovery_job,
+    icims_url_discovery_job,
+    jobvite_url_discovery_job,
+    lever_url_discovery_job,
+    smartrecruiters_url_discovery_job,
+    full_url_discovery_job,
+    master_company_urls_job
+)
 from dagster_betterjobs.schedules import daily_job_scrape_schedule
 
 
@@ -60,6 +71,7 @@ defs = Definitions(
         lever_url_discovery_job,
         smartrecruiters_url_discovery_job,
         full_url_discovery_job,
+        master_company_urls_job,
     ],
     schedules=[
         daily_job_scrape_schedule,

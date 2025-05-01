@@ -12,7 +12,7 @@ logger = get_dagster_logger()
     group_name="url_discovery",
     compute_kind="python",
     io_manager_key="duckdb",
-    deps=["raw_job_listings", "company_urls", "initialize_db"]
+    deps=["raw_job_listings", "initialize_db"]
 )
 def job_url_discovery(context: AssetExecutionContext) -> pd.DataFrame:
     """

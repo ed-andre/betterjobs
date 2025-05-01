@@ -10,7 +10,7 @@ from dagster import asset, AssetExecutionContext, get_dagster_logger, Output, Me
 logger = get_dagster_logger()
 
 @asset(
-    group_name="data_loading",
+    group_name="raw_data_loading",
     compute_kind="python",
     io_manager_key="duckdb",
     deps=["initialize_db"],

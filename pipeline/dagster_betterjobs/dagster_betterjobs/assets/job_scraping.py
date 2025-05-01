@@ -23,7 +23,7 @@ class JobSearchConfig(Config):
     group_name="job_scraping",
     compute_kind="web_scraping",
     required_resource_keys={"duckdb_resource"},
-    deps=["store_company_urls", "initialize_db"]
+    deps=["initialize_db"]
 )
 def scrape_jobs(context: AssetExecutionContext, config: JobScrapingConfig) -> Dict:
     """
