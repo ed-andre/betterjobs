@@ -7,6 +7,8 @@ setup(
         "dagster",
         "dagster-cloud",
         "dagster-duckdb",
+        "dagster-gcp",
+        "dagster-gcp-pandas",
         "pandas",
         "duckdb",
         "sqlescapy",

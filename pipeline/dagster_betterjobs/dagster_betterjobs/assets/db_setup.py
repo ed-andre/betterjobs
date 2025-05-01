@@ -37,8 +37,8 @@ def initialize_db(context: AssetExecutionContext):
         """).fetchall()
 
         if tables:
-            context.log.info(f"Found existing tables: {[t[0] for t in tables]}")
-            context.log.info("Dropping existing tables to refresh schema")
+            context.log.info(f"Found all existing tables: {[t[0] for t in tables]}")
+            context.log.info("Dropping main existing tables to refresh schema")
 
             try:
                 # Drop tables in correct order (most dependent first)
@@ -88,26 +88,11 @@ def initialize_db(context: AssetExecutionContext):
             );
             """)
 
-            # Raw job listings table
-            conn.execute("""
-            CREATE TABLE IF NOT EXISTS raw_job_listings (
-                raw_job_id INTEGER PRIMARY KEY,
-                company_name TEXT NOT NULL,
-                job_title TEXT NOT NULL,
-                date_posted TEXT,
-                job_url TEXT,
-                job_url_verified BOOLEAN DEFAULT FALSE,
-                date_retrieved TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                processed BOOLEAN DEFAULT FALSE
-            );
-            """)
-
             # Jobs table
             conn.execute("""
             CREATE TABLE IF NOT EXISTS jobs (
                 job_id INTEGER PRIMARY KEY,
                 company_id INTEGER NOT NULL,
-                raw_job_id INTEGER,
                 job_title TEXT NOT NULL,
                 job_description TEXT,
                 job_url TEXT NOT NULL,
@@ -115,8 +100,7 @@ def initialize_db(context: AssetExecutionContext):
                 date_posted TIMESTAMP,
                 date_retrieved TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 is_active BOOLEAN DEFAULT TRUE,
-                FOREIGN KEY (company_id) REFERENCES companies(company_id),
-                FOREIGN KEY (raw_job_id) REFERENCES raw_job_listings(raw_job_id)
+                FOREIGN KEY (company_id) REFERENCES companies(company_id)
             );
             """)
 
@@ -126,10 +110,6 @@ def initialize_db(context: AssetExecutionContext):
             conn.execute("CREATE INDEX IF NOT EXISTS idx_companies_industry ON companies(company_industry);")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_companies_city ON companies(city);")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_companies_verified ON companies(url_verified);")
-
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_raw_jobs_company ON raw_job_listings(company_name);")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_raw_jobs_title ON raw_job_listings(job_title);")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_raw_jobs_processed ON raw_job_listings(processed);")
 
             conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_company ON jobs(company_id);")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_title ON jobs(job_title);")

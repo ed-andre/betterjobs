@@ -6,6 +6,7 @@ import time
 from typing import List, Dict, Any
 
 from dagster import asset, AssetExecutionContext, get_dagster_logger, Output, MetadataValue
+from ..utils.id_generator import generate_job_id
 
 logger = get_dagster_logger()
 
@@ -19,7 +20,7 @@ logger = get_dagster_logger()
 def raw_job_listings(context: AssetExecutionContext) -> None:
     """
     Load raw job listings from the companies_jobs.csv file into a staging table,
-    then transfer to the raw_job_listings table with proper ID generation.
+    then transfer to the raw_job_listings table in the public schema with proper ID generation.
 
     Returns None instead of a DataFrame to avoid type conversion issues with the IO manager.
     """
@@ -55,27 +56,61 @@ def raw_job_listings(context: AssetExecutionContext) -> None:
     # Prepare the dataframe for loading
     df_jobs = df_jobs[required_columns].copy()
 
+    # Generate job IDs
+    df_jobs['raw_job_id'] = df_jobs.apply(
+        lambda row: generate_job_id(row['company_name'], row['job_title'], row['date_posted']),
+        axis=1
+    )
+
     # Add empty columns for job_url and processing status
     df_jobs['job_url'] = None
     df_jobs['job_url_verified'] = False
     df_jobs['processed'] = False
+    df_jobs['date_retrieved'] = pd.Timestamp.now()
 
     # Create unique keys for deduplication
     df_jobs['job_key'] = df_jobs['company_name'] + '|' + df_jobs['job_title']
 
-    # Check for existing records in the database to make rerunning idempotent
+    # Create the main table in public schema if it doesn't exist
     with context.resources.duckdb_resource.get_connection() as conn:
-        # Check if the table exists
-        table_exists = conn.execute("""
-            SELECT name FROM sqlite_master
-            WHERE type='table' AND name='raw_job_listings'
-        """).fetchone()
+        # First ensure the public schema exists
+        conn.execute("CREATE SCHEMA IF NOT EXISTS public")
 
-        if table_exists:
+        create_main_table_sql = """
+        CREATE TABLE IF NOT EXISTS public.raw_job_listings (
+            raw_job_id VARCHAR PRIMARY KEY,
+            company_name TEXT NOT NULL,
+            job_title TEXT NOT NULL,
+            date_posted TEXT,
+            job_url TEXT,
+            job_url_verified BOOLEAN DEFAULT FALSE,
+            processed BOOLEAN DEFAULT FALSE,
+            date_retrieved TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+        conn.execute(create_main_table_sql)
+        context.log.info("Created or verified main table")
+
+        # Create indexes for the main table
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_public_raw_jobs_company
+            ON public.raw_job_listings (company_name)
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_public_raw_jobs_title
+            ON public.raw_job_listings (job_title)
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_public_raw_jobs_processed
+            ON public.raw_job_listings (processed)
+        """)
+
+        # Check for existing records in the database to make rerunning idempotent
+        try:
             # Get existing job keys
             existing_jobs_df = pd.read_sql("""
                 SELECT company_name, job_title
-                FROM raw_job_listings
+                FROM public.raw_job_listings
             """, conn)
 
             if not existing_jobs_df.empty:
@@ -90,8 +125,9 @@ def raw_job_listings(context: AssetExecutionContext) -> None:
                 context.log.info(f"Filtered out {original_count - len(df_jobs)} jobs that already exist in the database")
             else:
                 context.log.info("No existing job records found in the database")
-        else:
-            context.log.info("Table raw_job_listings does not exist yet")
+        except Exception as e:
+            context.log.info(f"Error checking existing records: {str(e)}")
+            context.log.info("Will proceed with loading all records")
 
     # Skip if there are no new jobs to load
     if df_jobs.empty:
@@ -112,12 +148,13 @@ def raw_job_listings(context: AssetExecutionContext) -> None:
     # Create a staging table for the data
     with context.resources.duckdb_resource.get_connection() as conn:
         # First, drop the staging table if it exists
-        drop_staging_sql = "DROP TABLE IF EXISTS raw_job_listings_staging"
+        drop_staging_sql = "DROP TABLE IF EXISTS public.raw_job_listings_staging"
         conn.execute(drop_staging_sql)
 
         # Create a staging table without ID constraints
         create_staging_sql = """
-        CREATE TABLE raw_job_listings_staging (
+        CREATE TABLE public.raw_job_listings_staging (
+            raw_job_id VARCHAR,
             company_name TEXT NOT NULL,
             job_title TEXT NOT NULL,
             date_posted TEXT,
@@ -142,94 +179,72 @@ def raw_job_listings(context: AssetExecutionContext) -> None:
 
                 context.log.info(f"Loading batch {batch_num+1}/{total_batches} ({len(batch_df)} jobs) into staging table")
 
-                # Use pandas to_sql for the staging table (which has no constraints)
-                batch_df.to_sql(
-                    'raw_job_listings_staging',
-                    conn,
-                    if_exists='append',
-                    index=False
-                )
+                # Convert batch to list of tuples for DuckDB insertion
+                records = batch_df.to_dict('records')
+                placeholders = ','.join(['(?, ?, ?, ?, ?, ?, ?, ?)'] * len(records))
+                values = []
+                for record in records:
+                    values.extend([
+                        record['raw_job_id'],
+                        record['company_name'],
+                        record['job_title'],
+                        record['date_posted'],
+                        record['job_url'],
+                        record['job_url_verified'],
+                        record['processed'],
+                        record['date_retrieved'].isoformat()
+                    ])
+
+                # Use DuckDB's native SQL interface
+                insert_sql = f"""
+                INSERT INTO public.raw_job_listings_staging
+                    (raw_job_id, company_name, job_title, date_posted, job_url, job_url_verified, processed, date_retrieved)
+                VALUES {placeholders}
+                """
+                conn.execute(insert_sql, values)
 
                 context.log.info(f"Successfully loaded batch {batch_num+1} into staging table")
 
             context.log.info(f"Completed loading {len(df_jobs)} jobs into staging table")
 
-            # Debug: Check the actual schema of both tables
-            raw_listings_schema = pd.read_sql("PRAGMA table_info(raw_job_listings)", conn)
-            staging_schema = pd.read_sql("PRAGMA table_info(raw_job_listings_staging)", conn)
+            # Deduplicate records in staging table before transfer
+            dedup_sql = """
+            CREATE TABLE public.raw_job_listings_dedup AS
+            SELECT DISTINCT ON (raw_job_id)
+                raw_job_id,
+                company_name,
+                job_title,
+                date_posted,
+                job_url,
+                job_url_verified,
+                processed,
+                date_retrieved
+            FROM public.raw_job_listings_staging
+            ORDER BY raw_job_id, date_retrieved DESC
+            """
+            conn.execute(dedup_sql)
+            context.log.info("Created deduplicated staging table")
 
-            context.log.info(f"Raw job listings schema:\n{raw_listings_schema}")
-            context.log.info(f"Staging table schema:\n{staging_schema}")
-
-            # Create a sequence for ID generation if it doesn't exist already
-            try:
-                conn.execute("CREATE SEQUENCE IF NOT EXISTS job_id_seq START 1")
-                context.log.info("Created or verified job ID sequence")
-            except Exception as e:
-                context.log.error(f"Error creating sequence: {str(e)}")
-                # Continue anyway as we have an alternative approach
-
-            # Try using the sequence for ID generation first
-            try:
-                # Now transfer from staging to the main table with ID generation from sequence
-                transfer_sql = """
-                INSERT INTO raw_job_listings
-                    (raw_job_id, company_name, job_title, date_posted, job_url, job_url_verified, processed, date_retrieved)
-                SELECT
-                    nextval('job_id_seq'), company_name, job_title, date_posted, job_url, job_url_verified, processed, date_retrieved
-                FROM raw_job_listings_staging
-                """
-
-                conn.execute(transfer_sql)
-                context.log.info("Transferred data using sequence for ID generation")
-            except Exception as e:
-                context.log.error(f"Sequence-based transfer failed: {str(e)}")
-
-                # Alternative approach - create a temp table with proper schema including SQLite-style AUTOINCREMENT
-                context.log.info("Trying alternative approach with direct SQLite AUTOINCREMENT")
-
-                # Drop temp table if it exists
-                conn.execute("DROP TABLE IF EXISTS temp_raw_job_listings")
-
-                # Create temp table with proper AUTOINCREMENT
-                conn.execute("""
-                CREATE TABLE temp_raw_job_listings (
-                    raw_job_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    company_name TEXT NOT NULL,
-                    job_title TEXT NOT NULL,
-                    date_posted TEXT,
-                    job_url TEXT,
-                    job_url_verified BOOLEAN DEFAULT FALSE,
-                    processed BOOLEAN DEFAULT FALSE,
-                    date_retrieved TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-                """)
-
-                # Copy data from staging to temp
-                conn.execute("""
-                INSERT INTO temp_raw_job_listings
-                    (company_name, job_title, date_posted, job_url, job_url_verified, processed, date_retrieved)
-                SELECT
-                    company_name, job_title, date_posted, job_url, job_url_verified, processed, date_retrieved
-                FROM raw_job_listings_staging
-                """)
-
-                # Drop the original table
-                conn.execute("DROP TABLE IF EXISTS raw_job_listings")
-
-                # Rename temp to original
-                conn.execute("ALTER TABLE temp_raw_job_listings RENAME TO raw_job_listings")
-
-                context.log.info("Rebuilt table with proper AUTOINCREMENT and transferred data")
+            # Transfer data from deduplicated staging to main table
+            transfer_sql = """
+            INSERT INTO public.raw_job_listings
+                (raw_job_id, company_name, job_title, date_posted, job_url, job_url_verified, processed, date_retrieved)
+            SELECT
+                raw_job_id, company_name, job_title, date_posted, job_url, job_url_verified, processed, date_retrieved
+            FROM public.raw_job_listings_dedup
+            """
+            conn.execute(transfer_sql)
+            context.log.info("Transferred deduplicated data to main table")
 
             # Check how many records were inserted
-            count_sql = "SELECT COUNT(*) FROM raw_job_listings"
+            count_sql = "SELECT COUNT(*) FROM public.raw_job_listings"
             count = conn.execute(count_sql).fetchone()[0]
             context.log.info(f"Total records in raw_job_listings table: {count}")
 
-            # Clean up - drop the staging table
-            conn.execute(drop_staging_sql)
-            context.log.info("Dropped staging table")
+            # Clean up - drop the staging tables
+            conn.execute("DROP TABLE IF EXISTS public.raw_job_listings_staging")
+            conn.execute("DROP TABLE IF EXISTS public.raw_job_listings_dedup")
+            context.log.info("Dropped staging tables")
 
             # Add metadata to the output
             context.add_output_metadata({

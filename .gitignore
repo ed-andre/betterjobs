@@ -119,3 +119,5 @@ Thumbs.db
 dagster_home/
 dagster.yaml
 .telemetry
+betterjobs-gkey.json
+.gcp

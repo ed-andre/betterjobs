@@ -1,5 +1,6 @@
 from dagster import Definitions, load_assets_from_modules, EnvVar
 from dagster_duckdb import DuckDBResource
+from dagster_gcp_pandas import BigQueryPandasIOManager
 from dagster_gemini import GeminiResource
 from dagster_openai import OpenAIResource
 from pathlib import Path
@@ -55,6 +56,13 @@ resources = {
         model=""
     ),
     "duckdb": BetterJobsIOManager(database=str(db_path)),
+    "bigquery": BigQueryPandasIOManager(
+        project=EnvVar("GCP_PROJECT_ID"),
+        dataset=EnvVar("GCP_DATASET_ID"),
+        location=EnvVar("GCP_LOCATION"),
+        timeout=15.0,
+        gcp_credentials=EnvVar("GCP_CREDENTIALS")
+    ),
 }
 
 # Create the definitions object
