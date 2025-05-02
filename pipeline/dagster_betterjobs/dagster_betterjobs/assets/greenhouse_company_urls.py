@@ -10,10 +10,11 @@ import traceback
 import requests
 from urllib.parse import urlparse
 
-from dagster import asset, AssetExecutionContext, Config, get_dagster_logger, Output, AssetMaterialization, MaterializeResult
+from dagster import asset, AssetExecutionContext, Config, get_dagster_logger, Output, AssetMaterialization, MaterializeResult, MetadataValue
 from dagster_gemini import GeminiResource
+from google.cloud import bigquery
 
-from .url_discovery import find_company_urls_individual, parse_gemini_response
+from .url_discovery import parse_gemini_response
 from .validate_urls import validate_urls
 from .retry_failed_company_urls import retry_failed_company_urls
 
@@ -118,10 +119,11 @@ def process_greenhouse_companies(
 @asset(
     group_name="url_discovery",
     compute_kind="gemini",
-    io_manager_key="duckdb",
-    deps=["initialize_db"]
+    io_manager_key="bigquery_io",
+    deps=["initialize_db"],
+    required_resource_keys={"bigquery", "gemini"}
 )
-def greenhouse_company_urls(context: AssetExecutionContext, gemini: GeminiResource) -> pd.DataFrame:
+def greenhouse_company_urls(context: AssetExecutionContext) -> None:
     """
     Specialized asset for discovering Greenhouse ATS job board URLs.
 
@@ -133,7 +135,12 @@ def greenhouse_company_urls(context: AssetExecutionContext, gemini: GeminiResour
     Before processing any company, it checks if the company already exists in the master_company_urls
     table to avoid redundant processing. Companies that already exist in the master table will be
     skipped unless they are explicitly reprocessed through a full rerun.
+
+    Returns None instead of a DataFrame to avoid type conversion issues with the IO manager.
     """
+    # Access the Gemini resource from context
+    gemini = context.resources.gemini
+
     # Get data source directory with proper path handling
     cwd = Path(os.getcwd())
     if cwd.name == "dagster_betterjobs" and "pipeline" in str(cwd):
@@ -156,8 +163,7 @@ def greenhouse_company_urls(context: AssetExecutionContext, gemini: GeminiResour
     # Check if directory exists
     if not datasource_dir.exists():
         context.log.error(f"Data source directory not found: {datasource_dir}")
-        # Return empty DataFrame with the correct structure
-        return pd.DataFrame(columns=["company_name", "company_industry", "platform", "ats_url", "career_url", "url_verified"])
+        return None
 
     # Load all company data
     all_companies = []
@@ -165,8 +171,7 @@ def greenhouse_company_urls(context: AssetExecutionContext, gemini: GeminiResour
 
     if not csv_files:
         context.log.warning(f"No company CSV files found in {datasource_dir}")
-        # Return empty DataFrame with the correct structure
-        return pd.DataFrame(columns=["company_name", "company_industry", "platform", "ats_url", "career_url", "url_verified"])
+        return None
 
     for file_path in csv_files:
         platform = file_path.stem.split("_")[0]
@@ -189,41 +194,47 @@ def greenhouse_company_urls(context: AssetExecutionContext, gemini: GeminiResour
 
     if not all_companies:
         context.log.warning("No Greenhouse company data was loaded from CSV files")
-        # Return empty DataFrame with the correct structure
-        return pd.DataFrame(columns=["company_name", "company_industry", "platform", "ats_url", "career_url", "url_verified"])
+        return None
 
     context.log.info(f"Loaded {len(all_companies)} Greenhouse companies from CSV files")
 
-    # Check master_company_urls table for existing companies
+    # Check master_company_urls table for existing companies using BigQuery
+    dataset_name = os.getenv("GCP_DATASET_ID")
+
     try:
-        with context.resources.duckdb_resource.get_connection() as conn:
-            # Check if master_company_urls table exists
-            table_exists = conn.execute("""
-                SELECT name
-                FROM sqlite_master
-                WHERE type='table'
-                AND name='master_company_urls'
-            """).fetchone()
+        # Get BigQuery client from context resources
+        client = context.resources.bigquery
 
-            if table_exists:
-                # Get list of companies already in master table
-                existing_companies_query = """
-                SELECT company_name
-                FROM public.master_company_urls
-                """
-                existing_df = conn.execute(existing_companies_query).df()
-                existing_companies = set(existing_df["company_name"])
+        # Check if master_company_urls table exists in BigQuery
+        table_id = f"{dataset_name}.master_company_urls"
+        try:
+            client.get_table(table_id)
+            table_exists = True
 
-                # Filter out companies that already exist in master table
-                original_count = len(all_companies)
-                all_companies = [c for c in all_companies if c["company_name"] not in existing_companies]
-                skipped_count = original_count - len(all_companies)
+            # Get list of companies already in master table using BigQuery
+            existing_companies_query = f"""
+            SELECT company_name
+            FROM {dataset_name}.master_company_urls
+            """
+            query_job = client.query(existing_companies_query)
+            existing_df = query_job.to_dataframe()
+            existing_companies = set(existing_df["company_name"])
 
-                context.log.info(f"Skipped {skipped_count} companies that already exist in master_company_urls table")
-                if skipped_count > 0:
-                    context.log.info(f"Processing {len(all_companies)} new companies")
+            # Filter out companies that already exist in master table
+            original_count = len(all_companies)
+            all_companies = [c for c in all_companies if c["company_name"] not in existing_companies]
+            skipped_count = original_count - len(all_companies)
+
+            context.log.info(f"Skipped {skipped_count} companies that already exist in master_company_urls table")
+            if skipped_count > 0:
+                context.log.info(f"Processing {len(all_companies)} new companies")
+        except Exception as e:
+            context.log.info(f"Master company URLs table not found or not accessible: {str(e)}")
+            context.log.info("Will process all companies")
     except Exception as e:
-        context.log.info(f"Could not check master_company_urls table, will process all companies: {str(e)}")
+        context.log.warning(f"BigQuery client error: {str(e)}")
+        context.log.warning("Cannot access BigQuery for master table check. Continuing with all companies.")
+        context.log.info("Please check your GCP credentials and permissions.")
 
     # Load previously processed companies if checkpoint exists
     processed_companies: Set[str] = set()
@@ -282,10 +293,10 @@ def greenhouse_company_urls(context: AssetExecutionContext, gemini: GeminiResour
                     asset_key=context.asset_key,
                     description=f"Processed batch {batch_num}/{total_batches}",
                     metadata={
-                        "companies_processed": len(results),
-                        "total_companies": len(all_companies),
-                        "batch": batch_num,
-                        "total_batches": total_batches
+                        "companies_processed": MetadataValue.int(len(results)),
+                        "total_companies": MetadataValue.int(len(all_companies)),
+                        "batch": MetadataValue.int(batch_num),
+                        "total_batches": MetadataValue.int(total_batches)
                     }
                 )
             )
@@ -315,6 +326,7 @@ def greenhouse_company_urls(context: AssetExecutionContext, gemini: GeminiResour
     if len(results) == 0:
         df = pd.DataFrame(columns=["company_name", "company_industry", "platform", "ats_url", "career_url", "url_verified"])
         context.log.warning("No results were produced")
+        return None
 
     # Log summary stats
     total_companies = len(df)
@@ -340,20 +352,159 @@ def greenhouse_company_urls(context: AssetExecutionContext, gemini: GeminiResour
         context.log.warning(f"{len(new_failed_companies)} companies failed processing")
         context.log.info("Failed companies saved to checkpoint directory for reprocessing")
 
-    return df
+    # Now save the data to BigQuery
+    client = context.resources.bigquery
+
+    # Create the greenhouse_company_urls table if it doesn't exist
+    create_table_sql = f"""
+    CREATE TABLE IF NOT EXISTS {dataset_name}.greenhouse_company_urls (
+        company_name STRING NOT NULL,
+        company_industry STRING,
+        platform STRING NOT NULL,
+        ats_url STRING,
+        career_url STRING,
+        url_verified BOOL DEFAULT FALSE,
+        date_processed TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """
+
+    query_job = client.query(create_table_sql)
+    query_job.result()  # Wait for the query to complete
+    context.log.info("Created or verified greenhouse_company_urls table")
+
+    # Skip if there are no results
+    if df.empty:
+        context.log.info("No data to load into BigQuery")
+        return None
+
+    # Add timestamp for when the record was processed
+    df['date_processed'] = pd.Timestamp.now()
+
+    # Create a temporary table for the bulk load approach
+    temp_table_name = f"{dataset_name}.greenhouse_company_urls_temp"
+
+    # Drop the temp table if it exists
+    query_job = client.query(f"DROP TABLE IF EXISTS {temp_table_name}")
+    query_job.result()
+
+    # Create the temporary table
+    create_temp_sql = f"""
+    CREATE TABLE {temp_table_name} (
+        company_name STRING NOT NULL,
+        company_industry STRING,
+        platform STRING NOT NULL,
+        ats_url STRING,
+        career_url STRING,
+        url_verified BOOL DEFAULT FALSE,
+        date_processed TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """
+    query_job = client.query(create_temp_sql)
+    query_job.result()
+    context.log.info("Created temporary table for bulk loading")
+
+    # Set up job configuration
+    job_config = bigquery.LoadJobConfig(
+        write_disposition="WRITE_TRUNCATE",
+        schema=[
+            bigquery.SchemaField("company_name", "STRING", mode="REQUIRED"),
+            bigquery.SchemaField("company_industry", "STRING"),
+            bigquery.SchemaField("platform", "STRING", mode="REQUIRED"),
+            bigquery.SchemaField("ats_url", "STRING"),
+            bigquery.SchemaField("career_url", "STRING"),
+            bigquery.SchemaField("url_verified", "BOOL"),
+            bigquery.SchemaField("date_processed", "TIMESTAMP"),
+        ]
+    )
+
+    # Fill any null values in string columns with empty strings to avoid type errors
+    for col in df.select_dtypes(include=['object']).columns:
+        df[col] = df[col].fillna('').astype(str)
+
+    # Handle boolean column explicitly
+    if 'url_verified' in df.columns:
+        df['url_verified'] = df['url_verified'].fillna(False)
+
+    # Load the dataframe into the temporary table
+    try:
+        job = client.load_table_from_dataframe(
+            df,
+            temp_table_name,
+            job_config=job_config
+        )
+        # Wait for the load job to complete
+        job.result()
+        context.log.info(f"Successfully loaded {len(df)} companies into temporary table")
+
+        # Deduplicate and insert data from temporary to main table
+        transfer_sql = f"""
+        INSERT INTO {dataset_name}.greenhouse_company_urls
+            (company_name, company_industry, platform, ats_url, career_url, url_verified, date_processed)
+        SELECT
+            t.company_name,
+            t.company_industry,
+            t.platform,
+            t.ats_url,
+            t.career_url,
+            CAST(t.url_verified AS BOOL),
+            t.date_processed
+        FROM {temp_table_name} t
+        LEFT JOIN {dataset_name}.greenhouse_company_urls m
+            ON t.company_name = m.company_name
+        WHERE m.company_name IS NULL
+        """
+        query_job = client.query(transfer_sql)
+        query_job.result()
+        context.log.info("Deduplicated and transferred data to main table")
+
+        # Check how many records were inserted
+        count_sql = f"SELECT COUNT(*) FROM {dataset_name}.greenhouse_company_urls"
+        query_job = client.query(count_sql)
+        count_result = list(query_job.result())
+        count = count_result[0][0]
+        context.log.info(f"Total records in greenhouse_company_urls table: {count}")
+
+        # Clean up - drop the temporary table
+        query_job = client.query(f"DROP TABLE IF EXISTS {temp_table_name}")
+        query_job.result()
+        context.log.info("Dropped temporary table")
+
+        # Add metadata to the output - convert NumPy types to Python native types and wrap in MetadataValue
+        context.add_output_metadata({
+            "total_companies_processed": MetadataValue.int(int(len(df))),
+            "ats_urls_found": MetadataValue.int(int(ats_urls_found)),
+            "career_urls_found": MetadataValue.int(int(career_urls_found)),
+            "verified_urls": MetadataValue.int(int(verified_urls)),
+            "bigquery_table": MetadataValue.text(f"{dataset_name}.greenhouse_company_urls"),
+            "total_records": MetadataValue.int(int(count))
+        })
+
+    except Exception as e:
+        context.log.error(f"Error loading company data to BigQuery: {str(e)}")
+        # Add error metadata
+        context.add_output_metadata({
+            "error": MetadataValue.text(str(e))
+        })
+
+    return None
 
 @asset(
     group_name="url_discovery",
     compute_kind="gemini",
-    io_manager_key="duckdb",
-    deps=["initialize_db", "greenhouse_company_urls"]
+    io_manager_key="bigquery_io",
+    deps=["initialize_db", "greenhouse_company_urls"],
+    required_resource_keys={"bigquery", "gemini"}
 )
-def retry_failed_greenhouse_company_urls(context: AssetExecutionContext, gemini: GeminiResource) -> pd.DataFrame:
+def retry_failed_greenhouse_company_urls(context: AssetExecutionContext) -> None:
     """
     Retries finding career URLs for Greenhouse companies that failed verification.
     Uses the generic retry function with Greenhouse-specific configuration.
-    """
 
+    Returns None instead of a DataFrame to avoid type conversion issues with the IO manager.
+    Results are written directly to BigQuery.
+    """
+    # Access the Gemini resource from context
+    gemini = context.resources.gemini
 
     return retry_failed_company_urls(
         context=context,

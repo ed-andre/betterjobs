@@ -1,10 +1,15 @@
-from dagster import Definitions, load_assets_from_modules, EnvVar
+from dagster import Definitions, load_assets_from_modules, EnvVar, resource
 from dagster_duckdb import DuckDBResource
 from dagster_gcp_pandas import BigQueryPandasIOManager
+from dagster_gcp import BigQueryResource
 from dagster_gemini import GeminiResource
 from dagster_openai import OpenAIResource
 from pathlib import Path
 import os
+import base64
+import json
+from google.cloud import bigquery
+from google.oauth2.service_account import Credentials
 
 from dagster_betterjobs import assets  # noqa: TID252
 from dagster_betterjobs.assets.job_scraping import JobScrapingConfig, JobSearchConfig
@@ -22,6 +27,28 @@ from dagster_betterjobs.jobs import (
     master_company_urls_job
 )
 from dagster_betterjobs.schedules import daily_job_scrape_schedule
+
+
+@resource
+def bigquery_client_resource(context):
+    """Resource that creates a BigQuery client using credentials from the environment."""
+    # Get environment variables
+    project_id = os.environ.get('GCP_PROJECT_ID')
+    gcp_credentials_b64 = os.environ.get('GCP_CREDENTIALS')
+
+    if not project_id or not gcp_credentials_b64:
+        raise ValueError("Missing required environment variables: GCP_PROJECT_ID, GCP_CREDENTIALS")
+
+    # Decode and parse credentials
+    try:
+        credentials_json = base64.b64decode(gcp_credentials_b64).decode("utf-8")
+        credentials_info = json.loads(credentials_json)
+        credentials = Credentials.from_service_account_info(credentials_info)
+        client = bigquery.Client(credentials=credentials, project=project_id)
+        return client
+    except Exception as e:
+        context.log.error(f"Failed to create BigQuery client: {str(e)}")
+        raise
 
 
 # Load all assets including:
@@ -56,7 +83,8 @@ resources = {
         model=""
     ),
     "duckdb": BetterJobsIOManager(database=str(db_path)),
-    "bigquery": BigQueryPandasIOManager(
+    "bigquery": bigquery_client_resource,
+    "bigquery_io": BigQueryPandasIOManager(
         project=EnvVar("GCP_PROJECT_ID"),
         dataset=EnvVar("GCP_DATASET_ID"),
         location=EnvVar("GCP_LOCATION"),
@@ -64,6 +92,12 @@ resources = {
         gcp_credentials=EnvVar("GCP_CREDENTIALS")
     ),
 }
+
+# Debug: Print environment variables
+print("GCP_CREDENTIALS present:", bool(os.getenv("GCP_CREDENTIALS")))
+print("GCP_PROJECT_ID present:", bool(os.getenv("GCP_PROJECT_ID")))
+print("GCP_DATASET_ID present:", bool(os.getenv("GCP_DATASET_ID")))
+print("GCP_LOCATION present:", bool(os.getenv("GCP_LOCATION")))
 
 # Create the definitions object
 defs = Definitions(

@@ -1,137 +1,135 @@
 import os
 from pathlib import Path
-from dagster import asset, AssetExecutionContext, get_dagster_logger
+from dagster import asset, AssetExecutionContext, get_dagster_logger, EnvVar
+from google.cloud import bigquery
+import json
+import base64
 
 logger = get_dagster_logger()
 
 @asset(
     group_name="database",
     compute_kind="database",
-    required_resource_keys={"duckdb_resource"},
 )
 def initialize_db(context: AssetExecutionContext):
     """
     Initialize the database schema by executing the SQL schema file.
     This asset creates the necessary tables for storing company and job data.
     """
-    # Get current working directory and create schema path based on it
-    cwd = Path(os.getcwd())
-    context.log.info(f"Current working directory: {cwd}")
+    # Get environment variables directly
+    project_id = os.environ.get('GCP_PROJECT_ID')
+    dataset_id = os.environ.get('GCP_DATASET_ID')
+    gcp_credentials = os.environ.get('GCP_CREDENTIALS')
+    location = os.environ.get('GCP_LOCATION', 'US')  # Default to US if not specified
 
-    # we need to add dagster_betterjobs to the path
-    # if we're already in the pipeline/dagster_betterjobs directory
-    if cwd.name == "dagster_betterjobs" and "pipeline" in str(cwd):
-        schema_file = cwd / "dagster_betterjobs" / "db" / "schema.sql"
-    else:
-        # Try to find the schema file based on conventional locations
-        schema_file = Path("pipeline/dagster_betterjobs/dagster_betterjobs/db/schema.sql")
+    if not project_id or not dataset_id or not gcp_credentials:
+        raise ValueError("Missing required environment variables: GCP_PROJECT_ID, GCP_DATASET_ID, GCP_CREDENTIALS")
 
-    context.log.info(f"Looking for schema file at: {schema_file}")
+    context.log.info(f"Using project: {project_id}, dataset: {dataset_id}, location: {location}")
+
+    # Create BigQuery client directly
+    try:
+        credentials_json = base64.b64decode(gcp_credentials).decode("utf-8")
+        credentials_info = json.loads(credentials_json)
+        from google.oauth2.service_account import Credentials
+        credentials = Credentials.from_service_account_info(credentials_info)
+        client = bigquery.Client(credentials=credentials, project=project_id)
+        context.log.info("BigQuery client created successfully")
+    except Exception as e:
+        context.log.error(f"Failed to create BigQuery client: {str(e)}")
+        raise
+
+    # First, create the dataset if it doesn't exist
+    try:
+        # Get dataset reference
+        dataset_ref = client.dataset(dataset_id)
+
+        # Try to get dataset to check if it exists
+        try:
+            client.get_dataset(dataset_ref)
+            context.log.info(f"Dataset {dataset_id} already exists")
+        except Exception:
+            # Dataset doesn't exist, create it
+            dataset = bigquery.Dataset(dataset_ref)
+            dataset.location = location
+            dataset = client.create_dataset(dataset)
+            context.log.info(f"Created dataset {dataset_id} in location {location}")
+    except Exception as e:
+        context.log.error(f"Error creating dataset: {str(e)}")
+        raise
+
+    # Set fully qualified table names with proper formatting for BigQuery
+    companies_table = f"`{project_id}`.`{dataset_id}`.`companies`"
+    jobs_table = f"`{project_id}`.`{dataset_id}`.`jobs`"
 
     # Drop existing tables to ensure clean schema
-    with context.resources.duckdb_resource.get_connection() as conn:
-        # First check if tables exist by querying sqlite_master
-        tables = conn.execute("""
-            SELECT name FROM sqlite_master
-            WHERE type='table' AND name NOT LIKE 'sqlite_%'
-        """).fetchall()
+    try:
+        # Drop tables in correct order (most dependent first)
+        query_job = client.query(f"DROP TABLE IF EXISTS {jobs_table}")
+        query_job.result()  # Wait for query to finish
 
-        if tables:
-            context.log.info(f"Found all existing tables: {[t[0] for t in tables]}")
-            context.log.info("Dropping main existing tables to refresh schema")
+        query_job = client.query(f"DROP TABLE IF EXISTS {companies_table}")
+        query_job.result()  # Wait for query to finish
 
-            try:
-                # Drop tables in correct order (most dependent first)
-                conn.execute("DROP TABLE IF EXISTS jobs;")
-                conn.execute("DROP TABLE IF EXISTS raw_job_listings;")
-                conn.execute("DROP TABLE IF EXISTS companies;")
-            except Exception as e:
-                # If the above fails, try dropping with CASCADE
-                context.log.info(f"Error with standard drop: {str(e)}")
-                context.log.info("Trying to drop tables with CASCADE option")
+        context.log.info("Tables dropped or reset for fresh schema")
+    except Exception as e:
+        context.log.error(f"Failed to drop tables: {str(e)}")
+        context.log.info("Will attempt to create schema anyway")
 
-                try:
-                    # Use CASCADE to automatically handle dependencies
-                    conn.execute("DROP TABLE IF EXISTS companies CASCADE;")
-                    conn.execute("DROP TABLE IF EXISTS raw_job_listings CASCADE;")
-                    conn.execute("DROP TABLE IF EXISTS jobs CASCADE;")
-                except Exception as e2:
-                    context.log.error(f"Failed to drop tables: {str(e2)}")
-                    context.log.info("Will attempt to create schema anyway")
+    # Create the tables using BigQuery API instead of SQL
+    try:
+        context.log.info("Creating companies table")
 
-            context.log.info("Tables dropped or reset for fresh schema")
+        # Define the companies table schema
+        companies_schema = [
+            bigquery.SchemaField("company_id", "INT64"),
+            bigquery.SchemaField("company_name", "STRING", mode="REQUIRED"),
+            bigquery.SchemaField("company_industry", "STRING"),
+            bigquery.SchemaField("employee_count_range", "STRING"),
+            bigquery.SchemaField("city", "STRING"),
+            bigquery.SchemaField("platform", "STRING", mode="REQUIRED"),
+            bigquery.SchemaField("ats_url", "STRING"),
+            bigquery.SchemaField("career_url", "STRING"),
+            bigquery.SchemaField("url_verified", "BOOL"),
+            bigquery.SchemaField("last_updated", "TIMESTAMP"),
+        ]
 
-    if not schema_file.exists():
-        # Log more detailed path information for debugging
-        context.log.error(f"Schema file not found at: {schema_file}")
-        context.log.error(f"Current working directory: {os.getcwd()}")
+        # Create table reference
+        companies_ref = client.dataset(dataset_id).table("companies")
 
-        # As a fallback, create the schema directly in code
-        context.log.info("Creating schema directly from code")
+        # Create companies table with clustering
+        companies_table_obj = bigquery.Table(companies_ref, schema=companies_schema)
+        companies_table_obj.clustering_fields = ["platform", "company_name"]
+        companies_table_obj = client.create_table(companies_table_obj)
+        context.log.info(f"Created companies table: {companies_table_obj.full_table_id}")
 
-        # Initialize database with hard-coded schema
-        with context.resources.duckdb_resource.get_connection() as conn:
-            # Companies table
-            conn.execute("""
-            CREATE TABLE IF NOT EXISTS companies (
-                company_id INTEGER PRIMARY KEY,
-                company_name TEXT NOT NULL,
-                company_industry TEXT,
-                employee_count_range TEXT,
-                city TEXT,
-                platform TEXT NOT NULL,
-                ats_url TEXT,
-                career_url TEXT,
-                url_verified BOOLEAN DEFAULT FALSE,
-                last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(company_name, platform)
-            );
-            """)
+        context.log.info("Creating jobs table")
 
-            # Jobs table
-            conn.execute("""
-            CREATE TABLE IF NOT EXISTS jobs (
-                job_id INTEGER PRIMARY KEY,
-                company_id INTEGER NOT NULL,
-                job_title TEXT NOT NULL,
-                job_description TEXT,
-                job_url TEXT NOT NULL,
-                location TEXT,
-                date_posted TIMESTAMP,
-                date_retrieved TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                is_active BOOLEAN DEFAULT TRUE,
-                FOREIGN KEY (company_id) REFERENCES companies(company_id)
-            );
-            """)
+        # Define the jobs table schema
+        jobs_schema = [
+            bigquery.SchemaField("job_id", "INT64"),
+            bigquery.SchemaField("company_id", "INT64", mode="REQUIRED"),
+            bigquery.SchemaField("job_title", "STRING", mode="REQUIRED"),
+            bigquery.SchemaField("job_description", "STRING"),
+            bigquery.SchemaField("job_url", "STRING", mode="REQUIRED"),
+            bigquery.SchemaField("location", "STRING"),
+            bigquery.SchemaField("date_posted", "TIMESTAMP"),
+            bigquery.SchemaField("date_retrieved", "TIMESTAMP"),
+            bigquery.SchemaField("is_active", "BOOL"),
+        ]
 
-            # Create indexes
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_companies_platform ON companies(platform);")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_companies_name ON companies(company_name);")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_companies_industry ON companies(company_industry);")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_companies_city ON companies(city);")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_companies_verified ON companies(url_verified);")
+        # Create table reference
+        jobs_ref = client.dataset(dataset_id).table("jobs")
 
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_company ON jobs(company_id);")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_title ON jobs(job_title);")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_date ON jobs(date_posted);")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_active ON jobs(is_active);")
+        # Create jobs table with clustering
+        jobs_table_obj = bigquery.Table(jobs_ref, schema=jobs_schema)
+        jobs_table_obj.clustering_fields = ["company_id", "job_title"]
+        jobs_table_obj = client.create_table(jobs_table_obj)
+        context.log.info(f"Created jobs table: {jobs_table_obj.full_table_id}")
 
-        context.log.info("Database schema created directly from code")
-        return "Database initialized (from code)"
-
-    # If we found the schema file, use it
-    context.log.info(f"Found schema file at: {schema_file}")
-    with open(schema_file, 'r') as f:
-        schema_sql = f.read()
-
-    # Execute schema creation
-    context.log.info("Initializing database schema from file")
-    with context.resources.duckdb_resource.get_connection() as conn:
-        statements = schema_sql.split(';')
-        for statement in statements:
-            if statement.strip():
-                conn.execute(statement)
+    except Exception as e:
+        context.log.error(f"Error creating tables: {str(e)}")
+        raise
 
     context.log.info("Database schema initialized successfully")
-
     return "Database initialized"

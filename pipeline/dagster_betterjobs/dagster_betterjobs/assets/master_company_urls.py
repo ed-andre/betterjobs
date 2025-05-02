@@ -1,8 +1,10 @@
 import pandas as pd
 import hashlib
 from datetime import datetime
-from dagster import asset, AssetExecutionContext, AssetKey
+from dagster import asset, AssetExecutionContext, AssetKey, MetadataValue
 from typing import List, Dict
+import os
+from google.cloud import bigquery
 
 def generate_company_id(company_name: str) -> str:
     """
@@ -19,7 +21,7 @@ def generate_company_id(company_name: str) -> str:
 @asset(
     group_name="company_urls",
     compute_kind="python",
-    io_manager_key="duckdb",
+    io_manager_key="bigquery_io",
     deps=[
         "workday_company_urls", "retry_failed_workday_company_urls",
         "greenhouse_company_urls", "retry_failed_greenhouse_company_urls",
@@ -29,49 +31,52 @@ def generate_company_id(company_name: str) -> str:
         "lever_company_urls", "retry_failed_lever_company_urls",
         "smartrecruiters_company_urls", "retry_failed_smartrecruiters_company_urls"
     ],
-    required_resource_keys={"duckdb_resource"}
+    required_resource_keys={"bigquery"}
 )
-def master_company_urls(context: AssetExecutionContext) -> pd.DataFrame:
+def master_company_urls(context: AssetExecutionContext) -> None:
     """
     Creates and maintains a master table of all company URLs across all ATS platforms.
     Queries both main and retry tables for each platform to ensure complete data.
     Handles deduplication and tracks record history for incremental processing.
     Generates and maintains stable company IDs.
+
+    Returns None instead of a DataFrame to avoid type conversion issues with the IO manager.
     """
+    # Get BigQuery client and dataset name
+    client = context.resources.bigquery
+    dataset_name = os.getenv("GCP_DATASET_ID")
+
     # Define platform tables to query
     platform_tables = {
-        "workday": ["workday_company_urls", "retry_failed_workday_company_urls"],
-        "greenhouse": ["greenhouse_company_urls", "retry_failed_greenhouse_company_urls"],
-        "bamboohr": ["bamboohr_company_urls", "retry_failed_bamboohr_company_urls"],
-        "icims": ["icims_company_urls", "retry_failed_icims_company_urls"],
-        "jobvite": ["jobvite_company_urls", "retry_failed_jobvite_company_urls"],
-        "lever": ["lever_company_urls", "retry_failed_lever_company_urls"],
-        "smartrecruiters": ["smartrecruiters_company_urls", "retry_failed_smartrecruiters_company_urls"]
+        "workday": ["workday_company_urls"],
+        "greenhouse": ["greenhouse_company_urls"],
+        "bamboohr": ["bamboohr_company_urls"],
+        "icims": ["icims_company_urls"],
+        "jobvite": ["jobvite_company_urls"],
+        "lever": ["lever_company_urls"],
+        "smartrecruiters": ["smartrecruiters_company_urls"]
     }
-
-    # Get DuckDB resource for querying
-    duckdb = context.resources.duckdb_resource
 
     processed_dfs = []
     required_columns = ["company_name", "company_industry", "platform", "ats_url", "career_url", "url_verified"]
 
-    # Query each platform's tables
+    # Query each platform's tables from BigQuery
     for platform, tables in platform_tables.items():
         for table in tables:
             try:
-                # Query the table using connection
-                with duckdb.get_connection() as conn:
-                    query = f"""
-                    SELECT
-                        company_name,
-                        company_industry,
-                        platform,
-                        ats_url,
-                        career_url,
-                        url_verified
-                    FROM public.{table}
-                    """
-                    df = conn.execute(query).df()
+                # Query the table using BigQuery client
+                query = f"""
+                SELECT
+                    company_name,
+                    company_industry,
+                    platform,
+                    ats_url,
+                    career_url,
+                    url_verified
+                FROM {dataset_name}.{table}
+                """
+                query_job = client.query(query)
+                df = query_job.to_dataframe()
 
                 if not df.empty:
                     # Ensure all required columns exist
@@ -90,7 +95,8 @@ def master_company_urls(context: AssetExecutionContext) -> pd.DataFrame:
 
     if not processed_dfs:
         context.log.warning("No data available from any source")
-        return pd.DataFrame(columns=required_columns + ["company_id", "date_added", "last_updated"])
+        # Return None instead of an empty DataFrame
+        return None
 
     # Combine all dataframes
     combined_df = pd.concat(processed_dfs, ignore_index=True)
@@ -98,10 +104,15 @@ def master_company_urls(context: AssetExecutionContext) -> pd.DataFrame:
     # Generate company IDs for all records
     combined_df["company_id"] = combined_df["company_name"].apply(generate_company_id)
 
-    # Get existing master table if it exists
+    # Get existing master table if it exists from BigQuery
     try:
-        with duckdb.get_connection() as conn:
-            query = """
+        # Check if master_company_urls table exists in BigQuery
+        table_id = f"{dataset_name}.master_company_urls"
+        try:
+            client.get_table(table_id)
+
+            # Get existing data
+            query = f"""
             SELECT
                 company_id,
                 company_name,
@@ -112,12 +123,16 @@ def master_company_urls(context: AssetExecutionContext) -> pd.DataFrame:
                 url_verified,
                 date_added,
                 last_updated
-            FROM public.master_company_urls
+            FROM {dataset_name}.master_company_urls
             """
-            existing_df = conn.execute(query).df()
+            query_job = client.query(query)
+            existing_df = query_job.to_dataframe()
             context.log.info(f"Loaded existing master table with {len(existing_df)} records")
+        except Exception as e:
+            context.log.info(f"Master company URLs table not found, creating new one: {str(e)}")
+            existing_df = pd.DataFrame(columns=required_columns + ["company_id", "date_added", "last_updated"])
     except Exception as e:
-        context.log.info(f"No existing master table found, creating new one: {str(e)}")
+        context.log.warning(f"Error accessing BigQuery: {str(e)}")
         existing_df = pd.DataFrame(columns=required_columns + ["company_id", "date_added", "last_updated"])
 
     # Current timestamp for updates
@@ -177,56 +192,133 @@ def master_company_urls(context: AssetExecutionContext) -> pd.DataFrame:
     ]
     combined_df = combined_df[table_columns]
 
-    # Ensure the table exists with correct schema
-    with duckdb.get_connection() as conn:
-        create_table_query = """
-        CREATE TABLE IF NOT EXISTS public.master_company_urls (
-            company_id VARCHAR,
-            company_name VARCHAR,
-            company_industry VARCHAR,
-            platform VARCHAR,
-            ats_url VARCHAR,
-            career_url VARCHAR,
-            url_verified BOOLEAN,
-            date_added TIMESTAMP,
-            last_updated TIMESTAMP,
-            PRIMARY KEY (company_id)
-        )
-        """
-        conn.execute(create_table_query)
+    # Create the master_company_urls table in BigQuery if it doesn't exist
+    create_table_sql = f"""
+    CREATE TABLE IF NOT EXISTS {dataset_name}.master_company_urls (
+        company_id STRING,
+        company_name STRING NOT NULL,
+        company_industry STRING,
+        platform STRING,
+        ats_url STRING,
+        career_url STRING,
+        url_verified BOOL DEFAULT FALSE,
+        date_added TIMESTAMP,
+        last_updated TIMESTAMP
+    )
+    """
+    query_job = client.query(create_table_sql)
+    query_job.result()  # Wait for the query to complete
+    context.log.info("Created or verified master_company_urls table in BigQuery")
 
-        # Register the DataFrame as a temporary view
-        conn.register('combined_df_view', combined_df)
+    # Create a temporary table for the bulk load approach
+    temp_table_name = f"{dataset_name}.master_company_urls_temp"
 
-        # Store the updated data
-        conn.execute("DELETE FROM public.master_company_urls")  # Clear existing data
-        conn.execute("""
-            INSERT INTO public.master_company_urls (
-                company_id,
-                company_name,
-                company_industry,
-                platform,
-                ats_url,
-                career_url,
-                url_verified,
-                date_added,
-                last_updated
-            )
-            SELECT
-                company_id,
-                company_name,
-                company_industry,
-                platform,
-                ats_url,
-                career_url,
-                CAST(url_verified AS BOOLEAN),
-                date_added,
-                last_updated
-            FROM combined_df_view
-        """)
+    # Drop the temp table if it exists
+    query_job = client.query(f"DROP TABLE IF EXISTS {temp_table_name}")
+    query_job.result()
 
-        # Unregister the temporary view
-        conn.unregister('combined_df_view')
+    # Create the temporary table
+    create_temp_sql = f"""
+    CREATE TABLE {temp_table_name} (
+        company_id STRING,
+        company_name STRING NOT NULL,
+        company_industry STRING,
+        platform STRING,
+        ats_url STRING,
+        career_url STRING,
+        url_verified BOOL DEFAULT FALSE,
+        date_added TIMESTAMP,
+        last_updated TIMESTAMP
+    )
+    """
+    query_job = client.query(create_temp_sql)
+    query_job.result()
+    context.log.info("Created temporary table for bulk loading")
+
+    # Fill any null values in string columns with empty strings to avoid type errors
+    for col in combined_df.select_dtypes(include=['object']).columns:
+        combined_df[col] = combined_df[col].fillna('').astype(str)
+
+    # Handle boolean column explicitly
+    if 'url_verified' in combined_df.columns:
+        combined_df['url_verified'] = combined_df['url_verified'].fillna(False)
+
+    # Ensure datetime columns are properly converted to pandas datetime format
+    # This will fix the "object of type <class 'str'> cannot be converted to int" error
+    # Use errors='coerce' to handle various formats and edge cases
+    combined_df['date_added'] = pd.to_datetime(combined_df['date_added'], errors='coerce')
+    combined_df['last_updated'] = pd.to_datetime(combined_df['last_updated'], errors='coerce')
+
+    # Replace any NaT values with current timestamp to ensure no nulls in datetime columns
+    current_timestamp = pd.Timestamp.now()
+    combined_df['date_added'] = combined_df['date_added'].fillna(current_timestamp)
+    combined_df['last_updated'] = combined_df['last_updated'].fillna(current_timestamp)
+
+    # Set up job configuration
+    job_config = bigquery.LoadJobConfig(
+        write_disposition="WRITE_TRUNCATE",
+        schema=[
+            bigquery.SchemaField("company_id", "STRING"),
+            bigquery.SchemaField("company_name", "STRING", mode="REQUIRED"),
+            bigquery.SchemaField("company_industry", "STRING"),
+            bigquery.SchemaField("platform", "STRING"),
+            bigquery.SchemaField("ats_url", "STRING"),
+            bigquery.SchemaField("career_url", "STRING"),
+            bigquery.SchemaField("url_verified", "BOOL"),
+            bigquery.SchemaField("date_added", "TIMESTAMP"),
+            bigquery.SchemaField("last_updated", "TIMESTAMP"),
+        ]
+    )
+
+    # Load the dataframe into the temporary table
+    job = client.load_table_from_dataframe(
+        combined_df,
+        temp_table_name,
+        job_config=job_config
+    )
+    # Wait for the load job to complete
+    job.result()
+    context.log.info(f"Successfully loaded {len(combined_df)} companies into temporary table")
+
+    # Delete existing data and insert from temporary table
+    clear_data_sql = f"DELETE FROM {dataset_name}.master_company_urls WHERE 1=1"
+    query_job = client.query(clear_data_sql)
+    query_job.result()
+    context.log.info("Cleared existing data from master_company_urls table")
+
+    # Insert data from temporary table to master table
+    insert_sql = f"""
+    INSERT INTO {dataset_name}.master_company_urls (
+        company_id,
+        company_name,
+        company_industry,
+        platform,
+        ats_url,
+        career_url,
+        url_verified,
+        date_added,
+        last_updated
+    )
+    SELECT
+        company_id,
+        company_name,
+        company_industry,
+        platform,
+        ats_url,
+        career_url,
+        CAST(url_verified AS BOOL),
+        date_added,
+        last_updated
+    FROM {temp_table_name}
+    """
+    query_job = client.query(insert_sql)
+    query_job.result()
+    context.log.info("Transferred data from temporary to master table")
+
+    # Drop the temporary table
+    query_job = client.query(f"DROP TABLE IF EXISTS {temp_table_name}")
+    query_job.result()
+    context.log.info("Dropped temporary table")
 
     # Log summary statistics
     total_companies = len(combined_df)
@@ -254,4 +346,13 @@ def master_company_urls(context: AssetExecutionContext) -> pd.DataFrame:
     context.log.info(f"New records: {new_records}")
     context.log.info(f"Updated records: {updated_records}")
 
-    return combined_df
+    # Add metadata to the output
+    context.add_output_metadata({
+        "total_companies": MetadataValue.int(int(total_companies)),
+        "verified_urls": MetadataValue.int(int(verified_urls)),
+        "new_records": MetadataValue.int(int(new_records)),
+        "updated_records": MetadataValue.int(int(updated_records)),
+        "bigquery_table": MetadataValue.text(f"{dataset_name}.master_company_urls")
+    })
+
+    return None

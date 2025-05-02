@@ -1,30 +1,32 @@
 -- Companies table to store company information
 CREATE TABLE IF NOT EXISTS companies (
-    company_id INTEGER PRIMARY KEY,
-    company_name TEXT NOT NULL,
-    company_industry TEXT,
-    employee_count_range TEXT,
-    city TEXT,
-    platform TEXT NOT NULL,
-    ats_url TEXT,
-    career_url TEXT,
-    url_verified BOOLEAN DEFAULT FALSE,
-    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(company_name, platform)
+    company_id INT64,
+    company_name STRING NOT NULL,
+    company_industry STRING,
+    employee_count_range STRING,
+    city STRING,
+    platform STRING NOT NULL,
+    ats_url STRING,
+    career_url STRING,
+    url_verified BOOL DEFAULT FALSE,
+    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
+    CONSTRAINT pk_companies PRIMARY KEY (company_id),
+    CONSTRAINT unique_company_platform UNIQUE(company_name, platform)
 );
 
 -- Processed jobs table to store detailed job information
 CREATE TABLE IF NOT EXISTS jobs (
-    job_id INTEGER PRIMARY KEY,
-    company_id INTEGER NOT NULL,
-    job_title TEXT NOT NULL,
-    job_description TEXT,
-    job_url TEXT NOT NULL,
-    location TEXT,
+    job_id INT64,
+    company_id INT64 NOT NULL,
+    job_title STRING NOT NULL,
+    job_description STRING,
+    job_url STRING NOT NULL,
+    location STRING,
     date_posted TIMESTAMP,
-    date_retrieved TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    is_active BOOLEAN DEFAULT TRUE,
-    FOREIGN KEY (company_id) REFERENCES companies(company_id)
+    date_retrieved TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
+    is_active BOOL DEFAULT TRUE,
+    CONSTRAINT pk_jobs PRIMARY KEY (job_id),
+    CONSTRAINT fk_jobs_company FOREIGN KEY (company_id) REFERENCES companies(company_id)
 );
 
 -- Create indexes for faster searching

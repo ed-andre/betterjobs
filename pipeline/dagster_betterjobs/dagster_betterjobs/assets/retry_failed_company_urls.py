@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 
 from dagster import asset, AssetExecutionContext, Config, get_dagster_logger, Output, AssetMaterialization, MaterializeResult
 from dagster_gemini import GeminiResource
+from google.cloud import bigquery
 
 from .url_discovery import find_company_urls_individual, parse_gemini_response
 from .validate_urls import validate_urls
@@ -26,10 +27,13 @@ def retry_failed_company_urls(
     ats_platform: str,
     table_name: str,
     url_patterns: Dict[str, List[str]] = None
-) -> pd.DataFrame:
+) -> None:
     """
     Generic function to retry finding career URLs for companies that failed verification.
     Uses a comprehensive approach to check multiple URL patterns for each ATS platform.
+
+    The function directly updates the BigQuery table and returns None instead of a DataFrame
+    to avoid type conversion issues with the IO manager.
 
     Args:
         context: Dagster execution context
@@ -39,7 +43,7 @@ def retry_failed_company_urls(
         url_patterns: Optional dictionary of URL patterns per platform. If None, uses default patterns.
 
     Returns:
-        DataFrame containing the retry results
+        None (results are written directly to BigQuery)
     """
     # Default URL patterns if none provided
     DEFAULT_URL_PATTERNS = {
@@ -69,7 +73,6 @@ def retry_failed_company_urls(
             "https://jobs.smartrecruiters.com/?company=[tenant]",
             "https://jobs.smartrecruiters.com/[tenant]",
             "https://careers.smartrecruiters.com/[tenant]",
-
         ],
         "workday": [
             "https://[tenant].wd1.myworkdayjobs.com/careers",
@@ -82,10 +85,8 @@ def retry_failed_company_urls(
     cwd = Path(os.getcwd())
     if cwd.name == "dagster_betterjobs" and "pipeline" in str(cwd):
         checkpoint_dir = Path("dagster_betterjobs/checkpoints")
-        db_path = Path("dagster_betterjobs/db/betterjobs.db")
     else:
         checkpoint_dir = Path("pipeline/dagster_betterjobs/dagster_betterjobs/checkpoints")
-        db_path = Path("pipeline/dagster_betterjobs/dagster_betterjobs/db/betterjobs.db")
 
     # Create checkpoint directory if it doesn't exist
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -118,18 +119,24 @@ def retry_failed_company_urls(
             context.log.error(f"Error loading ATS switched companies: {str(e)}")
 
     try:
-        # SQL to fetch companies with unverified URLs
+        # Get dataset name for BigQuery operations
+        dataset_name = os.getenv("GCP_DATASET_ID")
+        if not dataset_name:
+            raise ValueError("GCP_DATASET_ID environment variable not set")
+
+        # Get BigQuery client from resources
+        client = context.resources.bigquery
+
+        # SQL to fetch companies with unverified URLs from BigQuery
         sql = f"""
         SELECT company_name, company_industry, platform
-        FROM public.{table_name}
+        FROM `{dataset_name}.{table_name}`
         WHERE url_verified = FALSE
         """
 
-        import duckdb
-        db_path = os.getenv("DUCKDB_PATH", str(db_path))
-        context.log.info(f"Connecting to database at: {db_path}")
-        conn = duckdb.connect(database=db_path)
-        unverified_df = conn.execute(sql).fetchdf()
+        context.log.info(f"Querying BigQuery for unverified companies in {dataset_name}.{table_name}")
+        query_job = client.query(sql)
+        unverified_df = query_job.to_dataframe()
 
         # Filter out companies that already have verified records
         failed_companies = []
@@ -143,11 +150,11 @@ def retry_failed_company_urls(
     except Exception as e:
         context.log.error(f"Error querying unverified companies: {str(e)}")
         context.log.error(traceback.format_exc())
-        return pd.DataFrame(columns=["company_name", "company_industry", "platform", "ats_url", "career_url", "url_verified"])
+        return None
 
     if not failed_companies:
         context.log.info("No unverified companies found")
-        return pd.DataFrame(columns=["company_name", "company_industry", "platform", "ats_url", "career_url", "url_verified"])
+        return None
 
     # Process companies in batches
     results = []
@@ -412,34 +419,100 @@ def retry_failed_company_urls(
         pd.DataFrame(failed_retries).to_csv(failed_retries_checkpoint, index=False)
         context.log.info(f"Saved {len(failed_retries)} failed retries to {failed_retries_checkpoint}")
 
-    # Update database with results
+    # Update BigQuery with results
     if results:
         try:
             results_df = pd.DataFrame(results)
-            # Update existing records and insert new ones
-            for _, row in results_df.iterrows():
-                if row.get("url_verified", False):
-                    update_sql = f"""
-                    UPDATE public.{table_name}
-                    SET platform = ?, ats_url = ?, career_url = ?, url_verified = ?
-                    WHERE company_name = ?
-                    """
-                    conn.execute(update_sql, [
-                        row["platform"],
-                        row["ats_url"],
-                        row["career_url"],
-                        row["url_verified"],
-                        row["company_name"]
-                    ])
-            context.log.info(f"Updated database with {len(results)} results")
+            verified_records = results_df[results_df["url_verified"] == True]
+
+            if not verified_records.empty:
+                context.log.info(f"Updating BigQuery with {len(verified_records)} verified records")
+
+                # Add timestamp for when the record was processed
+                verified_records['date_processed'] = pd.Timestamp.now()
+
+                # Create a temporary table for batch updates
+                temp_table_name = f"{dataset_name}.{table_name}_temp_updates"
+
+                # Drop the temp table if it exists
+                query_job = client.query(f"DROP TABLE IF EXISTS `{temp_table_name}`")
+                query_job.result()
+
+                # Create the temporary table
+                create_temp_sql = f"""
+                CREATE TABLE `{temp_table_name}` (
+                    company_name STRING NOT NULL,
+                    company_industry STRING,
+                    platform STRING NOT NULL,
+                    ats_url STRING,
+                    career_url STRING,
+                    url_verified BOOL DEFAULT FALSE,
+                    date_processed TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+                query_job = client.query(create_temp_sql)
+                query_job.result()
+                context.log.info("Created temporary table for batch updates")
+
+                # Set up job configuration
+                job_config = bigquery.LoadJobConfig(
+                    write_disposition="WRITE_TRUNCATE",
+                    schema=[
+                        bigquery.SchemaField("company_name", "STRING", mode="REQUIRED"),
+                        bigquery.SchemaField("company_industry", "STRING"),
+                        bigquery.SchemaField("platform", "STRING", mode="REQUIRED"),
+                        bigquery.SchemaField("ats_url", "STRING"),
+                        bigquery.SchemaField("career_url", "STRING"),
+                        bigquery.SchemaField("url_verified", "BOOL"),
+                        bigquery.SchemaField("date_processed", "TIMESTAMP"),
+                    ]
+                )
+
+                # Fill any null values in string columns with empty strings to avoid type errors
+                for col in verified_records.select_dtypes(include=['object']).columns:
+                    verified_records[col] = verified_records[col].fillna('').astype(str)
+
+                # Handle boolean column explicitly
+                if 'url_verified' in verified_records.columns:
+                    verified_records['url_verified'] = verified_records['url_verified'].fillna(False)
+
+                # Load the dataframe into the temporary table
+                job = client.load_table_from_dataframe(
+                    verified_records,
+                    temp_table_name,
+                    job_config=job_config
+                )
+                # Wait for the load job to complete
+                job.result()
+                context.log.info(f"Successfully loaded {len(verified_records)} records into temporary table")
+
+                # Update main table from temporary table
+                update_sql = f"""
+                UPDATE `{dataset_name}.{table_name}` main
+                SET
+                    platform = temp.platform,
+                    ats_url = temp.ats_url,
+                    career_url = temp.career_url,
+                    url_verified = temp.url_verified,
+                    date_processed = temp.date_processed
+                FROM `{temp_table_name}` temp
+                WHERE main.company_name = temp.company_name
+                """
+                query_job = client.query(update_sql)
+                query_job.result()
+                context.log.info(f"Updated {table_name} table with verified records")
+
+                # Clean up - drop the temporary table
+                query_job = client.query(f"DROP TABLE IF EXISTS `{temp_table_name}`")
+                query_job.result()
+                context.log.info("Dropped temporary table")
+            else:
+                context.log.info("No verified records to update in BigQuery")
         except Exception as e:
-            context.log.error(f"Error updating database: {str(e)}")
+            context.log.error(f"Error updating BigQuery: {str(e)}")
             context.log.error(traceback.format_exc())
 
-    # Close database connection
-    conn.close()
-
-    return pd.DataFrame(results)
+    return None
 
 
 

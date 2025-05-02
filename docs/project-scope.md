@@ -7,7 +7,7 @@ BetterJobs aims to develop a comprehensive job search platform that retrieves jo
 1. Create a robust data pipeline using Dagster to:
    - Retrieve job listings from company career sites
    - Process and standardize job data from different platforms
-   - Store structured job data in a DuckDB database
+   - Store structured job data in BigQuery database
    - Schedule regular updates to maintain fresh listings
 
 2. Develop a user interface to:
@@ -33,10 +33,11 @@ The MVP will focus on delivering a working system that can:
 ## Development Plan
 
 ### Phase 1: Data Collection Infrastructure
-1. **Company URL Discovery**
-   - Create a Dagster asset to use Google Gemini API to find career site URLs for each company in the CSV files
-   - Store company data (name, industry, platform, URL) in DuckDB
-   - Implement validation to ensure URLs are correct and accessible
+1. **Company URL Discovery** ✅
+   - ✅ Create a Dagster asset to use Google Gemini API to find career site URLs for each company in the CSV files
+   - ✅ Store company data (name, industry, platform, URL) in BigQuery
+   - ✅ Implement validation to ensure URLs are correct and accessible
+   - ✅ Create master company URLs table to consolidate data from all platforms
 
 2. **Basic Scraper Framework**
    - Develop platform-specific scrapers for the initial target platforms
@@ -55,7 +56,7 @@ The MVP will focus on delivering a working system that can:
    - Extract key information from job descriptions
 
 3. **Data Storage**
-   - Design and implement DuckDB schema for storing job data
+   - Design and implement BigQuery schema for storing job data
    - Create indexes for efficient querying
    - Implement update/merge logic to handle new and changed listings
 
@@ -82,7 +83,7 @@ The MVP will focus on delivering a working system that can:
 
 ## Architecture Overview
 - **Dagster Pipeline**: Orchestrates the entire data workflow
-- **DuckDB**: Provides lightweight but powerful storage for job and company data
+- **BigQuery**: Provides scalable cloud storage for job and company data
 - **Web Frontend**: Simple interface for interaction with the system
 - **Scraper Modules**: Platform-specific code for data extraction
 - **API Layer**: Services the frontend and provides data access
