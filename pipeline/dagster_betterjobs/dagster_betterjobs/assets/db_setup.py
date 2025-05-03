@@ -9,7 +9,7 @@ logger = get_dagster_logger()
 
 @asset(
     group_name="database",
-    compute_kind="database",
+    kinds={"bigquery"},
 )
 def initialize_db(context: AssetExecutionContext):
     """

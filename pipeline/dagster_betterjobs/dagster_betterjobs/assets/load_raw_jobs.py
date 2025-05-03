@@ -13,7 +13,7 @@ logger = get_dagster_logger()
 
 @asset(
     group_name="raw_data_loading",
-    compute_kind="python",
+    kinds={"python", "bigquery"},
     io_manager_key="bigquery_io",
     deps=["initialize_db"],
     required_resource_keys={"bigquery"}
@@ -21,7 +21,7 @@ logger = get_dagster_logger()
 def raw_job_listings(context: AssetExecutionContext) -> None:
     """
     Load raw job listings from the companies_jobs.csv file into a staging table,
-    then transfer to the raw_job_listings table in the public schema with proper ID generation.
+    then transfer to the raw_job_listings table with proper ID generation.
 
     Returns None instead of a DataFrame to avoid type conversion issues with the IO manager.
     """

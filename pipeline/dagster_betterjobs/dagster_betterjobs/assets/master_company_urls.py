@@ -20,7 +20,7 @@ def generate_company_id(company_name: str) -> str:
 
 @asset(
     group_name="company_urls",
-    compute_kind="python",
+    kinds={"python", "sql", "bigquery"},
     io_manager_key="bigquery_io",
     deps=[
         "workday_company_urls", "retry_failed_workday_company_urls",

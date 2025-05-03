@@ -118,7 +118,7 @@ def process_greenhouse_companies(
 
 @asset(
     group_name="url_discovery",
-    compute_kind="gemini",
+    kinds={"gemini", "bigquery"},
     io_manager_key="bigquery_io",
     deps=["initialize_db"],
     required_resource_keys={"bigquery", "gemini"}
@@ -490,7 +490,7 @@ def greenhouse_company_urls(context: AssetExecutionContext) -> None:
 
 @asset(
     group_name="url_discovery",
-    compute_kind="gemini",
+    kinds={"gemini", "bigquery"},
     io_manager_key="bigquery_io",
     deps=["initialize_db", "greenhouse_company_urls"],
     required_resource_keys={"bigquery", "gemini"}

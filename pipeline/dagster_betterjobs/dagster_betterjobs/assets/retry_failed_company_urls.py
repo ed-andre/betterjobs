@@ -70,7 +70,6 @@ def retry_failed_company_urls(
             "https://careers.lever.co/[tenant]"
         ],
         "smartrecruiters": [
-            "https://jobs.smartrecruiters.com/?company=[tenant]",
             "https://jobs.smartrecruiters.com/[tenant]",
             "https://careers.smartrecruiters.com/[tenant]",
         ],
