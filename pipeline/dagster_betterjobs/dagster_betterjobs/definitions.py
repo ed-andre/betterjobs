@@ -13,6 +13,11 @@ from google.oauth2.service_account import Credentials
 
 from dagster_betterjobs import assets  # noqa: TID252
 from dagster_betterjobs.assets.job_scraping import JobScrapingConfig, JobSearchConfig
+from dagster_betterjobs.assets.bamboohr_jobs_discovery import (
+    bamboohr_company_jobs_discovery,
+    bamboohr_jobs_discovery_job,
+    bamboohr_jobs_all_partitions_job
+)
 from dagster_betterjobs.io import BetterJobsIOManager
 from dagster_betterjobs.jobs import (
     job_scraping_job,
@@ -26,20 +31,21 @@ from dagster_betterjobs.jobs import (
     full_url_discovery_job,
     master_company_urls_job
 )
-from dagster_betterjobs.schedules import daily_job_scrape_schedule
+from dagster_betterjobs.schedules import (
+
+    bamboohr_jobs_hourly_schedule
+)
 
 
 @resource
 def bigquery_client_resource(context):
-    """Resource that creates a BigQuery client using credentials from the environment."""
-    # Get environment variables
+    """Creates a BigQuery client using environment credentials."""
     project_id = os.environ.get('GCP_PROJECT_ID')
     gcp_credentials_b64 = os.environ.get('GCP_CREDENTIALS')
 
     if not project_id or not gcp_credentials_b64:
         raise ValueError("Missing required environment variables: GCP_PROJECT_ID, GCP_CREDENTIALS")
 
-    # Decode and parse credentials
     try:
         credentials_json = base64.b64decode(gcp_credentials_b64).decode("utf-8")
         credentials_info = json.loads(credentials_json)
@@ -51,25 +57,21 @@ def bigquery_client_resource(context):
         raise
 
 
-# Load all assets including:
-# - Platform-specific assets (workday_company_urls, greenhouse_company_urls, bamboohr_company_urls, etc.)
-# - Job scraping assets
+# Load assets from modules
 all_assets = load_assets_from_modules([assets])
 
-# Create properly resolved database path to avoid duplication issues
+# Resolve database path based on execution directory
 current_dir = Path(os.getcwd())
 if current_dir.name == "dagster_betterjobs" and "pipeline" in str(current_dir):
-    # If we're already in pipeline/dagster_betterjobs
     db_path = Path("dagster_betterjobs/db/betterjobs.db")
 else:
-    # Otherwise use the full path
     db_path = Path("pipeline/dagster_betterjobs/dagster_betterjobs/db/betterjobs.db")
 
-# Make sure the directory for the database exists
+# Ensure database directory exists
 db_dir = db_path.parent
 os.makedirs(db_dir, exist_ok=True)
 
-# Define resources configuration
+# Configure resources
 resources = {
     "duckdb_resource": DuckDBResource(
         database=str(db_path)
@@ -93,13 +95,13 @@ resources = {
     ),
 }
 
-# Debug: Print environment variables
+# Verify presence of required environment variables
 print("GCP_CREDENTIALS present:", bool(os.getenv("GCP_CREDENTIALS")))
 print("GCP_PROJECT_ID present:", bool(os.getenv("GCP_PROJECT_ID")))
 print("GCP_DATASET_ID present:", bool(os.getenv("GCP_DATASET_ID")))
 print("GCP_LOCATION present:", bool(os.getenv("GCP_LOCATION")))
 
-# Create the definitions object
+# Define Dagster application
 defs = Definitions(
     assets=all_assets,
     resources=resources,
@@ -114,8 +116,11 @@ defs = Definitions(
         smartrecruiters_url_discovery_job,
         full_url_discovery_job,
         master_company_urls_job,
+        bamboohr_jobs_discovery_job,
+        bamboohr_jobs_all_partitions_job,
     ],
     schedules=[
-        daily_job_scrape_schedule,
+       
+        bamboohr_jobs_hourly_schedule,
     ],
 )
