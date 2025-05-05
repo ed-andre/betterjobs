@@ -13,8 +13,9 @@ from dagster_betterjobs.assets.job_scraping import scrape_jobs, job_search_resul
 from dagster_betterjobs.assets.load_raw_jobs import raw_job_listings
 from dagster_betterjobs.assets.job_url_discovery import raw_job_url_discovery
 
-# Import the new BambooHR jobs discovery asset
 from dagster_betterjobs.assets.bamboohr_jobs_discovery import bamboohr_company_jobs_discovery
+from dagster_betterjobs.assets.greenhouse_jobs_discovery import greenhouse_company_jobs_discovery
+from dagster_betterjobs.assets.job_search import search_jobs
 
 __all__ = [
     "retry_failed_company_urls",
@@ -38,5 +39,7 @@ __all__ = [
     "job_search_results",
     "raw_job_listings",
     "raw_job_url_discovery",
-    "bamboohr_company_jobs_discovery"
+    "bamboohr_company_jobs_discovery",
+    "greenhouse_company_jobs_discovery",
+    "search_jobs"
 ]

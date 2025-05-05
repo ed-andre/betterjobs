@@ -1,4 +1,4 @@
-from dagster import AssetSelection, define_asset_job, OpExecutionContext, op, job, Config, In, Out
+from dagster import AssetSelection, define_asset_job, OpExecutionContext, op, job, Config, In, Out, RunConfig
 
 # Define jobs based on asset selection
 job_scraping_job = define_asset_job(
@@ -68,4 +68,30 @@ master_company_urls_job = define_asset_job(
     name="master_company_urls_job",
     selection=AssetSelection.assets("master_company_urls"),
     description="Job that maintains the master table of all company URLs"
+)
+
+# Define a job for data/database engineering position search
+data_engineering_job = define_asset_job(
+    name="data_engineering_job",
+    selection=AssetSelection.assets("search_jobs"),
+    description="Job that searches for SQL Developer, Database Developer, and Data Engineer positions in NY, NJ, or remote",
+    config=RunConfig(
+        ops={
+            "search_jobs": {
+                "config": {
+                    "keywords": ["SQL", "database", "ETL", "pipeline", "data engineer"],
+                    "job_titles": ["SQL", "Database", "Data", "Software", "BI ", "Developer", "Engineer", "Analyst"],
+                    "excluded_keywords": ["overseas only", "non-US", "offshore"],
+                    "locations": ["New York", "New Jersey", "NY", "NJ", ""],
+                    "remote": True,
+                    "days_back": 20,
+                    "max_results": 500,
+                    "min_match_score": 0.1,
+                    "output_format": "html",
+                    "output_file": "output/data_engineering_jobs_{date}.html",
+                    "include_descriptions": True
+                }
+            }
+        }
+    )
 )

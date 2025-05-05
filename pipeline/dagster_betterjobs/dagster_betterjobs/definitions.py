@@ -29,7 +29,8 @@ from dagster_betterjobs.jobs import (
     lever_url_discovery_job,
     smartrecruiters_url_discovery_job,
     full_url_discovery_job,
-    master_company_urls_job
+    master_company_urls_job,
+    data_engineering_job
 )
 from dagster_betterjobs.schedules import (
 
@@ -118,9 +119,10 @@ defs = Definitions(
         master_company_urls_job,
         bamboohr_jobs_discovery_job,
         bamboohr_jobs_all_partitions_job,
+        data_engineering_job,
     ],
     schedules=[
-       
+
         bamboohr_jobs_hourly_schedule,
     ],
 )

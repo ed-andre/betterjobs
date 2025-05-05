@@ -8,7 +8,7 @@ import base64
 logger = get_dagster_logger()
 
 @asset(
-    group_name="database",
+    group_name="database_setup",
     kinds={"bigquery"},
 )
 def initialize_db(context: AssetExecutionContext):

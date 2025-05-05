@@ -3,7 +3,7 @@ import json
 import os
 import pandas as pd
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 from google.cloud import bigquery
 from dagster import (
@@ -12,7 +12,7 @@ from dagster import (
     Definitions, define_asset_job
 )
 
-from dagster_betterjobs.scrapers.bamboohr_scraper import BambooHRScraper
+from dagster_betterjobs.scrapers.greenhouse_scraper import GreenhouseScraper
 
 logger = get_dagster_logger()
 
@@ -23,8 +23,8 @@ alpha_partitions = StaticPartitionsDefinition([
     "0-9", "other"
 ])
 
-class BambooHRJobsDiscoveryConfig(Config):
-    """Configuration parameters for BambooHR job discovery."""
+class GreenhouseJobsDiscoveryConfig(Config):
+    """Configuration parameters for Greenhouse job discovery."""
     max_companies: Optional[int] = None  # Optional limit on processed companies
     rate_limit: float = 2.0  # Seconds between requests
     max_retries: int = 3
@@ -33,7 +33,7 @@ class BambooHRJobsDiscoveryConfig(Config):
     max_company_id: Optional[int] = None  # For batch processing
     days_to_look_back: int = 14  # Job freshness threshold in days
     batch_size: int = 10  # Companies per batch before committing
-    skip_detailed_fetch: bool = False  # Skip detailed job info for faster processing
+    skip_detailed_fetch: bool = True  # Skip detailed job info as all data is in initial response
     skip_processed_companies: bool = False  # Process all companies by default, even if already in checkpoint
 
 @asset(
@@ -43,9 +43,9 @@ class BambooHRJobsDiscoveryConfig(Config):
     deps=["master_company_urls"],
     partitions_def=alpha_partitions
 )
-def bamboohr_company_jobs_discovery(context: AssetExecutionContext, config: BambooHRJobsDiscoveryConfig) -> Dict:
+def greenhouse_company_jobs_discovery(context: AssetExecutionContext, config: GreenhouseJobsDiscoveryConfig) -> Dict:
     """
-    Discovers and stores job listings from BambooHR career sites.
+    Discovers and stores job listings from Greenhouse career sites.
 
     Processes companies partitioned by first letter of company name,
     retrieves all current job listings, and stores them in BigQuery.
@@ -57,6 +57,8 @@ def bamboohr_company_jobs_discovery(context: AssetExecutionContext, config: Bamb
 
     # Set job freshness cutoff date
     cutoff_date = datetime.now() - timedelta(days=config.days_to_look_back)
+    # Make cutoff_date timezone-aware with UTC timezone to match Greenhouse dates
+    cutoff_date = cutoff_date.replace(tzinfo=timezone.utc)
     cutoff_str = cutoff_date.strftime("%Y-%m-%d")
 
     context.log.info(f"Processing company name partition {partition_key}")
@@ -72,8 +74,8 @@ def bamboohr_company_jobs_discovery(context: AssetExecutionContext, config: Bamb
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
     # Configure partition-specific checkpoint files
-    checkpoint_file = checkpoint_dir / f"bamboohr_jobs_discovery_{partition_key}_checkpoint.csv"
-    failed_companies_file = checkpoint_dir / f"bamboohr_jobs_discovery_{partition_key}_failed.csv"
+    checkpoint_file = checkpoint_dir / f"greenhouse_jobs_discovery_{partition_key}_checkpoint.csv"
+    failed_companies_file = checkpoint_dir / f"greenhouse_jobs_discovery_{partition_key}_failed.csv"
 
     context.log.info(f"Using checkpoint file: {checkpoint_file}")
 
@@ -88,8 +90,8 @@ def bamboohr_company_jobs_discovery(context: AssetExecutionContext, config: Bamb
     query = f"""
     SELECT company_id, company_name, company_industry, career_url, ats_url
     FROM {dataset_name}.master_company_urls
-    WHERE platform = 'bamboohr'
-    AND ats_url IS NOT NULL
+    WHERE platform = 'greenhouse'
+    AND (ats_url IS NOT NULL OR career_url IS NOT NULL)
     AND url_verified = TRUE
     {letter_filter}
     """
@@ -114,7 +116,7 @@ def bamboohr_company_jobs_discovery(context: AssetExecutionContext, config: Bamb
         return {"error": str(e), "status": "failed"}
 
     total_companies = len(companies_df)
-    context.log.info(f"Found {total_companies} BambooHR companies in partition {partition_key} to process")
+    context.log.info(f"Found {total_companies} Greenhouse companies in partition {partition_key} to process")
 
     # Track processing statistics
     stats = {
@@ -153,11 +155,11 @@ def bamboohr_company_jobs_discovery(context: AssetExecutionContext, config: Bamb
     # Skip already processed companies if configured to do so
     if config.skip_processed_companies and checkpoint_file.exists():
         companies_to_process = companies_df[~companies_df["company_id"].astype(str).isin(processed_company_ids)]
-        context.log.info(f"{len(companies_to_process)} BambooHR companies remaining to process after skipping processed ones")
+        context.log.info(f"{len(companies_to_process)} Greenhouse companies remaining to process after skipping processed ones")
     else:
         # Process all companies, even those previously processed
         companies_to_process = companies_df
-        context.log.info(f"Processing all {len(companies_to_process)} BambooHR companies in this partition")
+        context.log.info(f"Processing all {len(companies_to_process)} Greenhouse companies in this partition")
 
     # Load previously failed companies
     failed_companies = []
@@ -171,7 +173,7 @@ def bamboohr_company_jobs_discovery(context: AssetExecutionContext, config: Bamb
 
     # Create jobs table if it doesn't exist
     create_table_sql = f"""
-    CREATE TABLE IF NOT EXISTS {dataset_name}.bamboohr_jobs (
+    CREATE TABLE IF NOT EXISTS {dataset_name}.greenhouse_jobs (
         job_id STRING,
         company_id STRING,
         job_title STRING,
@@ -179,8 +181,10 @@ def bamboohr_company_jobs_discovery(context: AssetExecutionContext, config: Bamb
         job_url STRING,
         location STRING,
         department STRING,
-        employment_status STRING,
-        date_posted DATE,
+        department_id STRING,
+        published_at DATE,
+        updated_at TIMESTAMP,
+        requisition_id STRING,
         date_retrieved TIMESTAMP,
         is_active BOOL,
         raw_data STRING,
@@ -191,7 +195,7 @@ def bamboohr_company_jobs_discovery(context: AssetExecutionContext, config: Bamb
     try:
         query_job = client.query(create_table_sql)
         query_job.result()
-        context.log.info("Created or verified bamboohr_jobs table in BigQuery")
+        context.log.info("Created or verified greenhouse_jobs table in BigQuery")
     except Exception as e:
         context.log.error(f"Error creating jobs table: {str(e)}")
         return {"error": str(e), "status": "failed"}
@@ -226,7 +230,10 @@ def bamboohr_company_jobs_discovery(context: AssetExecutionContext, config: Bamb
             ats_url = company["ats_url"]
 
             context.log.info(f"Processing jobs for {company_name} (ID: {company_id})")
-            context.log.info(f"Using ATS URL: {ats_url}")
+
+            # Use ATS URL if available, otherwise fall back to career URL
+            url_to_use = ats_url if ats_url else career_url
+            context.log.info(f"Using URL: {url_to_use}")
 
             # Track company results for checkpoint
             company_result = {
@@ -241,14 +248,14 @@ def bamboohr_company_jobs_discovery(context: AssetExecutionContext, config: Bamb
             }
 
             try:
-                # Create BambooHR scraper
-                scraper = BambooHRScraper(
+                # Create Greenhouse scraper
+                scraper = GreenhouseScraper(
                     career_url=career_url,
                     rate_limit=config.rate_limit,
                     max_retries=config.max_retries,
                     retry_delay=config.retry_delay,
                     dagster_log=context.log,  # Pass Dagster logger to the scraper
-                    ats_url=ats_url,  # Pass the BambooHR ATS URL
+                    ats_url=ats_url,  # Pass the Greenhouse ATS URL
                     cutoff_date=cutoff_date  # Pass the cutoff date to the scraper
                 )
 
@@ -277,11 +284,15 @@ def bamboohr_company_jobs_discovery(context: AssetExecutionContext, config: Bamb
                     if not job_id or not job_url:
                         continue
 
+                    # Ensure job_id is always a string
+                    job_id = str(job_id)
+                    job["job_id"] = job_id
+
                     # Get detailed job info unless skipped in config
                     job_details = job
                     if not config.skip_detailed_fetch:
                         try:
-                            job_details = scraper.get_job_details(job_id)
+                            job_details = scraper.get_job_details(job_url)
                             # Add short delay to avoid overwhelming the server
                             time.sleep(0.5)
                         except Exception as e:
@@ -289,17 +300,8 @@ def bamboohr_company_jobs_discovery(context: AssetExecutionContext, config: Bamb
                             # Use basic info if detailed fetch fails
                             job_details = job
 
-                    # Check posting date if available
-                    date_posted = job_details.get("date_posted")
-                    is_recent = True
-
-                    if date_posted:
-                        try:
-                            posted_date = datetime.strptime(date_posted, "%Y-%m-%d")
-                            is_recent = posted_date >= cutoff_date
-                        except (ValueError, TypeError):
-                            # If we can't parse the date, assume it's recent
-                            is_recent = True
+                    # Check if job is recent enough
+                    is_recent = job_details.get("is_recent", True)
 
                     # Skip old jobs
                     if not is_recent:
@@ -311,7 +313,7 @@ def bamboohr_company_jobs_discovery(context: AssetExecutionContext, config: Bamb
                     # Check if job already exists in BigQuery
                     check_sql = f"""
                     SELECT job_id
-                    FROM {dataset_name}.bamboohr_jobs
+                    FROM {dataset_name}.greenhouse_jobs
                     WHERE job_url = '{job_url}'
                     """
 
@@ -325,39 +327,49 @@ def bamboohr_company_jobs_discovery(context: AssetExecutionContext, config: Bamb
                     # Prepare job data
                     job_title = job_details.get("job_title", "")
                     job_description = job_details.get("job_description", "")
-                    department = job_details.get("department", "")
-                    employment_status = job_details.get("employment_status", "")
 
-                    # Handle location data
-                    location_str = None
-                    if job_details.get("location_string"):
-                        location_str = job_details["location_string"]
-                    elif isinstance(job_details.get("location"), dict):
-                        loc_parts = []
-                        loc = job_details["location"]
-                        if loc.get("city"):
-                            loc_parts.append(loc["city"])
-                        if loc.get("state"):
-                            loc_parts.append(loc["state"])
-                        if loc_parts:
-                            location_str = ", ".join(loc_parts)
+                    # Extract content (job description) if available
+                    if "content" in job_details and not job_description:
+                        job_description = job_details.get("content", "")
+
+                    # Handle department data
+                    department = None
+                    department_id = None
+                    if job_details.get("department"):
+                        dept_data = job_details["department"]
+                        department = dept_data.get("name")
+                        department_id = dept_data.get("id")
+
+                    # Get location string
+                    location_str = job_details.get("location")
+
+                    # Get dates
+                    published_at = job_details.get("published_at")
+                    updated_at = job_details.get("updated_at")
+                    requisition_id = job_details.get("requisition_id")
 
                     # Convert any structured data to JSON strings
                     raw_data = None
                     if "raw_data" in job_details:
-                        raw_data = json.dumps(job_details["raw_data"])
+                        try:
+                            raw_data = json.dumps(job_details["raw_data"])
+                        except Exception as e:
+                            context.log.warning(f"Error converting raw data to JSON: {str(e)}")
+                            raw_data = "{}"
 
                     # Prepare job record
                     job_record = {
-                        "job_id": job_id,
-                        "company_id": company_id,
+                        "job_id": job_id,  # Now guaranteed to be a string
+                        "company_id": str(company_id),  # Ensure company_id is string too
                         "job_title": job_title,
                         "job_description": job_description,
                         "job_url": job_url,
                         "location": location_str,
                         "department": department,
-                        "employment_status": employment_status,
-                        "date_posted": date_posted,
+                        "department_id": str(department_id) if department_id else None,
+                        "published_at": published_at,
+                        "updated_at": updated_at,
+                        "requisition_id": str(requisition_id) if requisition_id else None,
                         "date_retrieved": datetime.now().isoformat(),
                         "is_active": True,
                         "raw_data": raw_data,
@@ -410,7 +422,7 @@ def bamboohr_company_jobs_discovery(context: AssetExecutionContext, config: Bamb
         if batch_jobs:
             try:
                 # Create a temporary table for bulk loading
-                temp_table_name = f"{dataset_name}.bamboohr_jobs_temp"
+                temp_table_name = f"{dataset_name}.greenhouse_jobs_temp"
 
                 # Drop the temp table if it exists
                 query_job = client.query(f"DROP TABLE IF EXISTS {temp_table_name}")
@@ -426,8 +438,10 @@ def bamboohr_company_jobs_discovery(context: AssetExecutionContext, config: Bamb
                     job_url STRING,
                     location STRING,
                     department STRING,
-                    employment_status STRING,
-                    date_posted DATE,
+                    department_id STRING,
+                    published_at DATE,
+                    updated_at TIMESTAMP,
+                    requisition_id STRING,
                     date_retrieved TIMESTAMP,
                     is_active BOOL,
                     raw_data STRING,
@@ -440,13 +454,21 @@ def bamboohr_company_jobs_discovery(context: AssetExecutionContext, config: Bamb
                 # Convert list of dicts to dataframe
                 jobs_df = pd.DataFrame(batch_jobs)
 
-                # Handle data types
+                # Handle data types - ensure all IDs are strings
+                for col in jobs_df.columns:
+                    if col.endswith('_id') or col == 'job_id' or col == 'company_id':
+                        jobs_df[col] = jobs_df[col].astype(str)
+
+                # Handle other object columns
                 for col in jobs_df.select_dtypes(include=['object']).columns:
                     jobs_df[col] = jobs_df[col].fillna('').astype(str)
 
                 # Convert date columns
-                if 'date_posted' in jobs_df.columns:
-                    jobs_df['date_posted'] = pd.to_datetime(jobs_df['date_posted'], errors='coerce')
+                if 'published_at' in jobs_df.columns:
+                    jobs_df['published_at'] = pd.to_datetime(jobs_df['published_at'], errors='coerce')
+
+                if 'updated_at' in jobs_df.columns:
+                    jobs_df['updated_at'] = pd.to_datetime(jobs_df['updated_at'], errors='coerce')
 
                 if 'date_retrieved' in jobs_df.columns:
                     jobs_df['date_retrieved'] = pd.to_datetime(jobs_df['date_retrieved'], errors='coerce')
@@ -462,8 +484,10 @@ def bamboohr_company_jobs_discovery(context: AssetExecutionContext, config: Bamb
                         bigquery.SchemaField("job_url", "STRING"),
                         bigquery.SchemaField("location", "STRING"),
                         bigquery.SchemaField("department", "STRING"),
-                        bigquery.SchemaField("employment_status", "STRING"),
-                        bigquery.SchemaField("date_posted", "DATE"),
+                        bigquery.SchemaField("department_id", "STRING"),
+                        bigquery.SchemaField("published_at", "DATE"),
+                        bigquery.SchemaField("updated_at", "TIMESTAMP"),
+                        bigquery.SchemaField("requisition_id", "STRING"),
                         bigquery.SchemaField("date_retrieved", "TIMESTAMP"),
                         bigquery.SchemaField("is_active", "BOOL"),
                         bigquery.SchemaField("raw_data", "STRING"),
@@ -481,17 +505,17 @@ def bamboohr_company_jobs_discovery(context: AssetExecutionContext, config: Bamb
 
                 # Insert only new jobs (not already in the main table)
                 insert_sql = f"""
-                INSERT INTO {dataset_name}.bamboohr_jobs (
+                INSERT INTO {dataset_name}.greenhouse_jobs (
                     job_id, company_id, job_title, job_description, job_url,
-                    location, department, employment_status, date_posted,
-                    date_retrieved, is_active, raw_data, partition_key
+                    location, department, department_id, published_at, updated_at,
+                    requisition_id, date_retrieved, is_active, raw_data, partition_key
                 )
                 SELECT
                     t.job_id, t.company_id, t.job_title, t.job_description, t.job_url,
-                    t.location, t.department, t.employment_status, t.date_posted,
-                    t.date_retrieved, t.is_active, t.raw_data, t.partition_key
+                    t.location, t.department, t.department_id, t.published_at, t.updated_at,
+                    t.requisition_id, t.date_retrieved, t.is_active, t.raw_data, t.partition_key
                 FROM {temp_table_name} t
-                LEFT JOIN {dataset_name}.bamboohr_jobs j
+                LEFT JOIN {dataset_name}.greenhouse_jobs j
                     ON t.job_url = j.job_url
                 WHERE j.job_url IS NULL
                 """
@@ -501,14 +525,16 @@ def bamboohr_company_jobs_discovery(context: AssetExecutionContext, config: Bamb
 
                 # Update existing jobs
                 update_sql = f"""
-                UPDATE {dataset_name}.bamboohr_jobs j
+                UPDATE {dataset_name}.greenhouse_jobs j
                 SET
                     j.job_title = t.job_title,
                     j.job_description = t.job_description,
                     j.location = t.location,
                     j.department = t.department,
-                    j.employment_status = t.employment_status,
-                    j.date_posted = t.date_posted,
+                    j.department_id = t.department_id,
+                    j.published_at = t.published_at,
+                    j.updated_at = t.updated_at,
+                    j.requisition_id = t.requisition_id,
                     j.date_retrieved = t.date_retrieved,
                     j.is_active = t.is_active,
                     j.raw_data = t.raw_data,
@@ -566,7 +592,7 @@ def bamboohr_company_jobs_discovery(context: AssetExecutionContext, config: Bamb
         )
 
     # Log summary stats
-    context.log.info(f"BambooHR job discovery complete for partition {partition_key}. Stats:")
+    context.log.info(f"Greenhouse job discovery complete for partition {partition_key}. Stats:")
     context.log.info(f"Total companies: {stats['total_companies']}")
     context.log.info(f"Companies processed: {stats['companies_processed']}")
     context.log.info(f"Companies with jobs: {stats['companies_with_jobs']}")
@@ -588,13 +614,13 @@ def bamboohr_company_jobs_discovery(context: AssetExecutionContext, config: Bamb
 
     # Update job count in BigQuery
     try:
-        query_job = client.query(f"SELECT COUNT(*) FROM {dataset_name}.bamboohr_jobs WHERE partition_key = '{partition_key}'")
+        query_job = client.query(f"SELECT COUNT(*) FROM {dataset_name}.greenhouse_jobs WHERE partition_key = '{partition_key}'")
         count_result = list(query_job.result())
         partition_jobs = count_result[0][0]
         context.log.info(f"Jobs in BigQuery table for partition {partition_key}: {partition_jobs}")
 
         # Get total job count too
-        query_job = client.query(f"SELECT COUNT(*) FROM {dataset_name}.bamboohr_jobs")
+        query_job = client.query(f"SELECT COUNT(*) FROM {dataset_name}.greenhouse_jobs")
         count_result = list(query_job.result())
         total_jobs = count_result[0][0]
         context.log.info(f"Total jobs in BigQuery table: {total_jobs}")
@@ -614,25 +640,25 @@ def bamboohr_company_jobs_discovery(context: AssetExecutionContext, config: Bamb
         "new_jobs_added": MetadataValue.int(int(stats["new_jobs_added"])),
         "jobs_updated": MetadataValue.int(int(stats["updated_jobs"])),
         "partition_key": MetadataValue.text(partition_key),
-        "bigquery_table": MetadataValue.text(f"{dataset_name}.bamboohr_jobs")
+        "bigquery_table": MetadataValue.text(f"{dataset_name}.greenhouse_jobs")
     })
 
     return stats
 
 # Create a job to run for specific partitions (normally by schedule)
-bamboohr_jobs_discovery_job = define_asset_job(
-    name="bamboohr_jobs_discovery_job",
-    selection=[bamboohr_company_jobs_discovery]
+greenhouse_jobs_discovery_job = define_asset_job(
+    name="greenhouse_jobs_discovery_job",
+    selection=[greenhouse_company_jobs_discovery]
 )
 
 # Create a job to process all partitions at once (for backfills)
-bamboohr_jobs_all_partitions_job = define_asset_job(
-    name="bamboohr_jobs_all_partitions_job",
-    selection=[bamboohr_company_jobs_discovery]
+greenhouse_jobs_all_partitions_job = define_asset_job(
+    name="greenhouse_jobs_all_partitions_job",
+    selection=[greenhouse_company_jobs_discovery]
 )
 
 # Create Dagster Definitions object for deployment
 defs = Definitions(
-    assets=[bamboohr_company_jobs_discovery],
-    jobs=[bamboohr_jobs_discovery_job, bamboohr_jobs_all_partitions_job]
+    assets=[greenhouse_company_jobs_discovery],
+    jobs=[greenhouse_jobs_discovery_job, greenhouse_jobs_all_partitions_job]
 )

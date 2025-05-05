@@ -143,3 +143,112 @@ The MVP will focus on delivering a working system that can:
 6. Test with sample of companies
 7. Optimize for performance and reliability
 8. Deploy at scale to process all ~900 BambooHR companies
+
+## Greenhouse Implementation Plan
+
+### Overview
+For Greenhouse job discovery, we need to handle two distinct scenarios:
+1. Direct Greenhouse API integration for companies with standard Greenhouse boards (`https://boards.greenhouse.io/[tenant]`)
+2. Beautiful Soup HTML parsing for embedded Greenhouse boards (`https://boards.greenhouse.io/embed/job_board?for=[tenant]`)
+
+### Greenhouse Direct API Implementation
+1. **Scraper Development**
+   - Create `GreenhouseScraper` class extending `BaseScraper`
+   - Implement specialized request handling for Greenhouse API endpoints
+   - Extract job listings and details from JSON response data
+
+2. **Data Collection Strategy**
+   - For companies with standard Greenhouse boards:
+     - Access the initial board URL (e.g., `https://job-boards.greenhouse.io/[tenant]`)
+     - Extract JSON data from the embedded JavaScript in the response
+     - Parse job listings from the `routes/$url_token` section containing job IDs, titles, locations, departments, and URLs
+     - For each job, capture detailed information including posting date, job description, and requirements
+     - Validate job posting dates against cutoff date
+     - Store job data in structured format
+
+3. **Data Extraction Fields**
+   - Primary job fields to extract:
+     - `id`: Unique job identifier
+     - `title`: Job title
+     - `location`: Job location
+     - `department`: Department name and ID
+     - `absolute_url`: Direct URL to job posting
+     - `published_at`: Date job was published
+     - `updated_at`: Last update timestamp
+     - `content`: Full job description and requirements
+     - `requisition_id`: External reference ID when available
+
+4. **Performance & Reliability**
+   - Implement robust error handling for API rate limits
+   - Add retry logic with exponential backoff
+   - Use batch processing to handle large job volumes
+   - Validate response integrity before processing
+
+### Greenhouse Embedded Implementation
+1. **Scraper Development**
+   - Create `GreenhouseEmbeddedScraper` class for embedded job boards
+   - Implement Beautiful Soup-based HTML parsing
+   - Extract job listings and details from DOM elements
+
+2. **Data Collection Strategy**
+   - For companies with embedded Greenhouse boards:
+     - Request the HTML page containing job listings
+     - Parse the DOM to extract job sections, departments, and individual listings
+     - For each job, request the detail page to get full job description
+     - Normalize data to match format from direct API implementation
+     - Validate job dates when available
+
+3. **Embedded URL Scraping Process Details**
+   - **For Job Listings**:
+     - Parse HTML from URLs following pattern: `https://boards.greenhouse.io/embed/job_board?for=[tenant]`
+     - Extract job listings from HTML elements with class="opening"
+     - Obtain job title from `<a>` tags, location from `<span class="location">` tags
+     - Extract job IDs from URL's `gh_jid` parameter in href attributes
+
+   - **For Job Details**:
+     - Instead of using direct job URLs which don't provide structured data
+     - Extract the `gh_jid` from the URL and construct a modified URL:
+       - Original: `https://www.dayonebio.com/careers/open-positions/?gh_jid=4496186008`
+       - Modified: `https://job-boards.greenhouse.io/embed/job_app?for=dayonebiopharmaceuticals&token=4496186008`
+     - This modified URL returns structured job details in JSON format
+
+   - **Implementation Approach**:
+     - Use BeautifulSoup for HTML parsing
+     - Extract job listings with their IDs, titles, and locations
+     - Construct proper URLs for job details
+     - Make secondary requests to retrieve detailed job information
+     - Ensure consistent data format compatible with direct API implementation
+
+3. **Integration & Testing**
+   - Develop unified interface for both scraper types
+   - Implement detection logic to determine which scraper to use
+   - Test with sample companies from both categories
+   - Validate data quality and completeness
+
+### Dagster Asset Implementation
+1. **Asset Development**
+   - Create `greenhouse_company_jobs_discovery` asset in Dagster
+   - Implement partitioning strategy similar to BambooHR implementation
+   - Support incremental processing with checkpoints
+
+2. **Data Storage**
+   - Design BigQuery schema for Greenhouse job data
+   - Implement data transformation and loading logic
+   - Ensure schema compatibility with BambooHR data for unified querying
+
+3. **Monitoring & Validation**
+   - Track processing metrics for each company
+   - Log detailed information for troubleshooting
+   - Implement data quality checks
+
+### Implementation Milestones
+1. Create base Greenhouse scraper class
+2. Implement direct API job listing discovery
+3. Implement embedded board HTML parser
+4. Develop job detail retrieval logic
+5. Add date filtering functionality
+6. Create Dagster asset for job discovery
+7. Integrate with existing database schema
+8. Test with sample companies from both categories
+9. Optimize for performance and reliability
+10. Deploy at scale for all Greenhouse companies
