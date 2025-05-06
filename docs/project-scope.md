@@ -252,3 +252,86 @@ For Greenhouse job discovery, we need to handle two distinct scenarios:
 8. Test with sample companies from both categories
 9. Optimize for performance and reliability
 10. Deploy at scale for all Greenhouse companies
+
+## SmartRecruiters Implementation Plan
+
+### Overview
+For SmartRecruiters job discovery, we need to parse HTML responses using BeautifulSoup, as SmartRecruiters doesn't expose a public API for job listings. The implementation focuses on extracting job listings from the main careers page and then fetching detailed information from individual job pages.
+
+### SmartRecruiters Implementation
+1. **Scraper Development**
+   - Create `SmartRecruitersJobScraper` class extending `BaseScraper`
+   - Implement BeautifulSoup-based HTML parsing for both job listings and details
+   - Handle proper request formatting with appropriate headers for SmartRecruiters sites
+
+2. **Data Collection Strategy**
+   - For career pages using SmartRecruiters:
+     - Request the main careers page HTML (e.g., `https://careers.smartrecruiters.com/ServiceNow/`)
+     - Parse job listings using `h4.details-title.job-title.link--block-target` CSS selector
+     - Extract job title from the element text and job URL from the parent `<a>` tag
+     - For each job, request the detail page to extract comprehensive job information
+     - Extract metadata from HTML tags and meta tags in job detail pages
+     - Store standardized job data with consistent fields matching other scrapers
+
+3. **Data Extraction Fields**
+   - Primary job fields to extract:
+     - `job_id`: Extracted from URL path segments or generated as fallback
+     - `job_title`: Job title text
+     - `location`: Job location from `span[itemprop="address"]`
+     - `job_description`: Concatenated text from `div.wysiwyg` elements
+     - `published_at`: Date from `meta[itemprop="datePosted"]`
+     - `updated_at`: From meta tags or same as published_at if not available
+     - `requisition_id`: From `meta[name="sr:job-ad-id"]`
+     - `department`: From job detail elements when available
+
+4. **Date Handling & Freshness**
+   - Parse ISO format dates from meta tags
+   - Implement timezone handling for proper date comparisons
+   - Filter jobs based on cutoff date (default 14 days)
+   - Maintain consistent date format across all job records
+
+5. **Request Management**
+   - Implement specialized headers required for SmartRecruiters sites
+   - Use rate limiting to prevent blocking
+   - Add retry logic with proper error handling
+   - Provide detailed logging for troubleshooting
+
+### Implementation Approach
+1. **For Job Listings**:
+   - Parse HTML from main career pages
+   - Extract job listings based on consistent SmartRecruiters DOM structure
+   - Handle both absolute and relative URLs for job detail pages
+   - Generate reliable job IDs from URL paths or as fallback from content hash
+
+2. **For Job Details**:
+   - Request individual job detail pages
+   - Parse structured HTML to extract comprehensive job information
+   - Extract metadata from meta tags for dates and identifiers
+   - Combine all information into a standardized job record
+
+3. **Integration & Testing**
+   - Ensure consistent data format compatible with other scrapers
+   - Test with sample companies using SmartRecruiters
+   - Validate data quality and completeness
+
+### Dagster Asset Implementation
+1. **Asset Development**
+   - Create `smartrecruiters_company_jobs_discovery` asset in Dagster
+   - Implement consistent partitioning strategy
+   - Support incremental processing with appropriate checkpoints
+
+2. **Data Storage**
+   - Use BigQuery schema compatible with other ATS platforms
+   - Ensure consistent field naming and data types
+   - Implement efficient update/merge logic for new and changed listings
+
+### Implementation Milestones
+1. Create SmartRecruiters scraper class
+2. Implement job listing discovery
+3. Develop job detail parsing
+4. Add metadata extraction and date filtering
+5. Create Dagster asset for job discovery
+6. Integrate with existing database schema
+7. Test with sample companies
+8. Optimize for performance and reliability
+9. Deploy at scale for all SmartRecruiters companies

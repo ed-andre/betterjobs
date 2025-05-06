@@ -44,13 +44,13 @@ class JobSearchConfig(Config):
     group_name="job_search",
     kinds={"bigquery", "python"},
     required_resource_keys={"bigquery"},
-    deps=["greenhouse_company_jobs_discovery", "bamboohr_company_jobs_discovery"]
+    deps=["greenhouse_company_jobs_discovery", "bamboohr_company_jobs_discovery", "smartrecruiters_company_jobs_discovery"]
 )
 def search_jobs(context: AssetExecutionContext, config: JobSearchConfig) -> pd.DataFrame:
     """
     Search for jobs across multiple platforms with flexible filtering options.
 
-    This asset can search across different job tables (Greenhouse, BambooHR, etc.)
+    This asset can search across different job tables (Greenhouse, BambooHR, SmartRecruiters, etc.)
     with filtering by keywords, job titles, locations, and date ranges.
     """
     # Initialize BigQuery client
@@ -80,6 +80,8 @@ def search_jobs(context: AssetExecutionContext, config: JobSearchConfig) -> pd.D
         tables_to_query.append(f"{dataset_name}.greenhouse_jobs")
     if "all" in config.platforms or "bamboohr" in config.platforms:
         tables_to_query.append(f"{dataset_name}.bamboohr_jobs")
+    if "all" in config.platforms or "smartrecruiters" in config.platforms:
+        tables_to_query.append(f"{dataset_name}.smartrecruiters_jobs")
     # Add additional platform tables as they become available
 
     context.log.info(f"Querying tables: {tables_to_query}")
@@ -106,7 +108,14 @@ def search_jobs(context: AssetExecutionContext, config: JobSearchConfig) -> pd.D
         context.log.info(f"Searching {platform} jobs...")
 
         # Determine date column based on platform
-        date_col = "published_at" if platform == "greenhouse" else "date_posted"
+        if platform == "greenhouse" or platform == "smartrecruiters":
+            date_col = "published_at"
+        else:
+            date_col = "date_posted"
+
+        # Determine if department column exists for this platform
+        include_department = platform in ["greenhouse", "bamboohr", "smartrecruiters"]
+        department_col = "j.department," if include_department else ""
 
         # Start building query
         query = f"""
@@ -119,7 +128,7 @@ def search_jobs(context: AssetExecutionContext, config: JobSearchConfig) -> pd.D
             {"j.job_description," if config.include_descriptions else ""}
             j.job_url,
             j.location,
-            {"j.department," if platform in ["greenhouse", "bamboohr"] else ""}
+            {department_col}
             {date_col} as posting_date,
             j.date_retrieved,
             {"j.raw_data," if config.include_raw_data else ""}

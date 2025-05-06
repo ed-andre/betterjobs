@@ -87,6 +87,7 @@ data_engineering_job = define_asset_job(
                     "days_back": 20,
                     "max_results": 500,
                     "min_match_score": 0.1,
+                    "platforms": ["greenhouse", "bamboohr", "smartrecruiters"],
                     "output_format": "html",
                     "output_file": "output/data_engineering_jobs_{date}.html",
                     "include_descriptions": True

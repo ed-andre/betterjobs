@@ -91,7 +91,7 @@ def retry_failed_company_urls(
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
     # Define checkpoint files
-    url_discovery_checkpoint = checkpoint_dir / "url_discovery_checkpoint.csv"
+    url_discovery_checkpoint = checkpoint_dir / "retry_url_discovery_checkpoint.csv"
     batch_checkpoint = checkpoint_dir / f"{ats_platform}_url_discovery_checkpoint.csv"
     failed_retries_checkpoint = checkpoint_dir / f"{ats_platform}_failed_retries.csv"
 

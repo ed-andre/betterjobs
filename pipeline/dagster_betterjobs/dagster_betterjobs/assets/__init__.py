@@ -15,6 +15,7 @@ from dagster_betterjobs.assets.job_url_discovery import raw_job_url_discovery
 
 from dagster_betterjobs.assets.bamboohr_jobs_discovery import bamboohr_company_jobs_discovery
 from dagster_betterjobs.assets.greenhouse_jobs_discovery import greenhouse_company_jobs_discovery
+from dagster_betterjobs.assets.smartrecruiters_jobs_discovery import smartrecruiters_company_jobs_discovery
 from dagster_betterjobs.assets.job_search import search_jobs
 
 __all__ = [
@@ -41,5 +42,6 @@ __all__ = [
     "raw_job_url_discovery",
     "bamboohr_company_jobs_discovery",
     "greenhouse_company_jobs_discovery",
+    "smartrecruiters_company_jobs_discovery",
     "search_jobs"
 ]
