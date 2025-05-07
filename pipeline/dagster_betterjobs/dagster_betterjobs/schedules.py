@@ -1,6 +1,6 @@
-from dagster import schedule
-from .jobs import job_scraping_job
-from .assets.bamboohr_jobs_discovery import bamboohr_jobs_discovery_job, alpha_partitions
+from dagster import schedule, RunRequest
+from .jobs import job_scraping_job, bamboohr_jobs_discovery_job, full_jobs_discovery_and_search_job
+from .assets.bamboohr_jobs_discovery import alpha_partitions
 from datetime import datetime
 
 # @schedule(
@@ -38,22 +38,35 @@ from datetime import datetime
     job=bamboohr_jobs_discovery_job,
 )
 def bamboohr_jobs_hourly_schedule(context):
-    """BambooHR job discovery that cycles through alphabetical partitions every 2 hours."""
-    # Select partition based on current hour
-    current_hour = datetime.now().hour
-    hour_index = (current_hour // 2) % len(alpha_partitions.get_partition_keys())
-    partition_to_run = alpha_partitions.get_partition_keys()[hour_index]
+    """BambooHR job discovery that runs all alphabetical partitions every 2 hours."""
+    # Get all partition keys from alpha_partitions
+    for partition_key in alpha_partitions.get_partition_keys():
+        # Create a unique run key for each partition
+        run_key = f"bamboohr_jobs_{partition_key}_{context.scheduled_execution_time.strftime('%Y-%m-%d_%H')}"
 
-    return {
-        "run_key": f"bamboohr_jobs_{partition_to_run}_{context.scheduled_execution_time.strftime('%Y-%m-%d_%H')}",
-        "run_config": {
-            "ops": {
-                "bamboohr_company_jobs_discovery": {
-                    "config": {
-                        "partition_key": partition_to_run
-                    }
-                }
-            }
-        },
-        "tags": {"partition": partition_to_run}
-    }
+        # Yield a RunRequest for each partition
+        yield RunRequest(
+            run_key=run_key,
+            partition_key=partition_key,
+            tags={"partition": partition_key}
+        )
+
+# Schedule for running all job discovery assets (except iCIMS) plus job search
+@schedule(
+    cron_schedule="0 4 * * *",  # Run daily at 4 AM
+    execution_timezone="US/Eastern",
+    job=full_jobs_discovery_and_search_job,
+)
+def full_jobs_discovery_and_search_schedule(context):
+    """Schedule that runs all job discovery assets (except iCIMS) plus job search daily."""
+    # Get all partition keys from alpha_partitions
+    for partition_key in alpha_partitions.get_partition_keys():
+        # Create a unique run key for each partition
+        run_key = f"full_jobs_discovery_and_search_{partition_key}_{context.scheduled_execution_time.strftime('%Y-%m-%d')}"
+
+        # Yield a RunRequest for each partition
+        yield RunRequest(
+            run_key=run_key,
+            partition_key=partition_key,
+            tags={"partition": partition_key}
+        )

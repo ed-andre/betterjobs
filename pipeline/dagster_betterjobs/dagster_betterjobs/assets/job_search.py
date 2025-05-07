@@ -82,6 +82,8 @@ def search_jobs(context: AssetExecutionContext, config: JobSearchConfig) -> pd.D
         tables_to_query.append(f"{dataset_name}.bamboohr_jobs")
     if "all" in config.platforms or "smartrecruiters" in config.platforms:
         tables_to_query.append(f"{dataset_name}.smartrecruiters_jobs")
+    if "all" in config.platforms or "workday" in config.platforms:
+        tables_to_query.append(f"{dataset_name}.workday_jobs")
     # Add additional platform tables as they become available
 
     context.log.info(f"Querying tables: {tables_to_query}")
@@ -108,7 +110,7 @@ def search_jobs(context: AssetExecutionContext, config: JobSearchConfig) -> pd.D
         context.log.info(f"Searching {platform} jobs...")
 
         # Determine date column based on platform
-        if platform == "greenhouse" or platform == "smartrecruiters":
+        if platform == "greenhouse" or platform == "smartrecruiters" or platform == "workday":
             date_col = "published_at"
         else:
             date_col = "date_posted"
@@ -186,7 +188,12 @@ def search_jobs(context: AssetExecutionContext, config: JobSearchConfig) -> pd.D
                 if location == "":
                     location_or_remote_conditions.append("LOWER(location) = ''")
                 else:
-                    location_or_remote_conditions.append(f"LOWER(location) LIKE LOWER('%{safe_location}%')")
+                    # Add "Location" as a match and handle multiple locations indicator
+                    location_or_remote_conditions.extend([
+                        f"LOWER(location) LIKE LOWER('%{safe_location}%')",
+                        f"LOWER(location) LIKE LOWER('%Location%')",
+                        f"LOWER(location) LIKE LOWER('%locations%')"
+                    ])
 
         # Add remote filter
         if config.remote is not None and config.remote:

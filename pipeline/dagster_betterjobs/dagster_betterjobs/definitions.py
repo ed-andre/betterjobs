@@ -1,4 +1,9 @@
-from dagster import Definitions, load_assets_from_modules, EnvVar, resource
+from dagster import (
+    Definitions,
+    load_assets_from_modules,
+    EnvVar,
+    resource
+)
 from dagster_duckdb import DuckDBResource
 from dagster_gcp_pandas import BigQueryPandasIOManager
 from dagster_gcp import BigQueryResource
@@ -12,15 +17,22 @@ from google.cloud import bigquery
 from google.oauth2.service_account import Credentials
 
 from dagster_betterjobs import assets  # noqa: TID252
-from dagster_betterjobs.assets.job_scraping import JobScrapingConfig, JobSearchConfig
+
 from dagster_betterjobs.assets.bamboohr_jobs_discovery import (
-    bamboohr_company_jobs_discovery,
-    bamboohr_jobs_discovery_job,
-    bamboohr_jobs_all_partitions_job
+    bamboohr_company_jobs_discovery
+)
+from dagster_betterjobs.assets.greenhouse_jobs_discovery import (
+    greenhouse_company_jobs_discovery
+)
+from dagster_betterjobs.assets.smartrecruiters_jobs_discovery import (
+    smartrecruiters_company_jobs_discovery
+)
+from dagster_betterjobs.assets.workday_jobs_discovery import (
+    workday_company_jobs_discovery
 )
 from dagster_betterjobs.io import BetterJobsIOManager
 from dagster_betterjobs.jobs import (
-    job_scraping_job,
+   
     workday_url_discovery_job,
     greenhouse_url_discovery_job,
     bamboohr_url_discovery_job,
@@ -30,11 +42,17 @@ from dagster_betterjobs.jobs import (
     smartrecruiters_url_discovery_job,
     full_url_discovery_job,
     master_company_urls_job,
-    data_engineering_job
+    data_engineering_job,
+    full_jobs_discovery_job,
+    bamboohr_jobs_discovery_job,
+    greenhouse_jobs_discovery_job,
+    smartrecruiters_jobs_discovery_job,
+    workday_jobs_discovery_job,
+    full_jobs_discovery_and_search_job
 )
 from dagster_betterjobs.schedules import (
-
-    bamboohr_jobs_hourly_schedule
+    bamboohr_jobs_hourly_schedule,
+    full_jobs_discovery_and_search_schedule
 )
 
 
@@ -107,7 +125,7 @@ defs = Definitions(
     assets=all_assets,
     resources=resources,
     jobs=[
-        job_scraping_job,
+
         workday_url_discovery_job,
         greenhouse_url_discovery_job,
         bamboohr_url_discovery_job,
@@ -118,11 +136,15 @@ defs = Definitions(
         full_url_discovery_job,
         master_company_urls_job,
         bamboohr_jobs_discovery_job,
-        bamboohr_jobs_all_partitions_job,
+        greenhouse_jobs_discovery_job,
+        smartrecruiters_jobs_discovery_job,
+        workday_jobs_discovery_job,
+        full_jobs_discovery_job,
         data_engineering_job,
+        full_jobs_discovery_and_search_job,
     ],
     schedules=[
-
         bamboohr_jobs_hourly_schedule,
+        full_jobs_discovery_and_search_schedule,
     ],
 )

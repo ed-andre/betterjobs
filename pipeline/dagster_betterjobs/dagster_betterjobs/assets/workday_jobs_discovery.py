@@ -1,17 +1,19 @@
 import time
 import json
 import os
+import re
 import pandas as pd
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 from google.cloud import bigquery
 from dagster import (
     asset, AssetExecutionContext, Config, get_dagster_logger,
-    MetadataValue, AssetMaterialization, StaticPartitionsDefinition
+    MetadataValue, AssetMaterialization, StaticPartitionsDefinition,
+    Definitions, define_asset_job
 )
 
-from dagster_betterjobs.scrapers.bamboohr_scraper import BambooHRScraper
+from dagster_betterjobs.scrapers.workday_scraper import WorkdayScraper
 
 logger = get_dagster_logger()
 
@@ -22,8 +24,8 @@ alpha_partitions = StaticPartitionsDefinition([
     "0-9", "other"
 ])
 
-class BambooHRJobsDiscoveryConfig(Config):
-    """Configuration parameters for BambooHR job discovery."""
+class WorkdayJobsDiscoveryConfig(Config):
+    """Configuration parameters for Workday job discovery."""
     max_companies: Optional[int] = None  # Optional limit on processed companies
     rate_limit: float = 2.0  # Seconds between requests
     max_retries: int = 3
@@ -32,7 +34,7 @@ class BambooHRJobsDiscoveryConfig(Config):
     max_company_id: Optional[int] = None  # For batch processing
     days_to_look_back: int = 14  # Job freshness threshold in days
     batch_size: int = 10  # Companies per batch before committing
-    skip_detailed_fetch: bool = False  # Skip detailed job info for faster processing
+    skip_detailed_fetch: bool = False  # Set to True to skip detailed job info
     skip_processed_companies: bool = False  # Process all companies by default, even if already in checkpoint
 
 @asset(
@@ -42,9 +44,9 @@ class BambooHRJobsDiscoveryConfig(Config):
     deps=["master_company_urls"],
     partitions_def=alpha_partitions
 )
-def bamboohr_company_jobs_discovery(context: AssetExecutionContext, config: BambooHRJobsDiscoveryConfig) -> Dict:
+def workday_company_jobs_discovery(context: AssetExecutionContext, config: WorkdayJobsDiscoveryConfig) -> Dict:
     """
-    Discovers and stores job listings from BambooHR career sites.
+    Discovers and stores job listings from Workday career sites.
 
     Processes companies partitioned by first letter of company name,
     retrieves all current job listings, and stores them in BigQuery.
@@ -71,8 +73,8 @@ def bamboohr_company_jobs_discovery(context: AssetExecutionContext, config: Bamb
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
     # Configure partition-specific checkpoint files
-    checkpoint_file = checkpoint_dir / f"bamboohr_jobs_discovery_{partition_key}_checkpoint.csv"
-    failed_companies_file = checkpoint_dir / f"bamboohr_jobs_discovery_{partition_key}_failed.csv"
+    checkpoint_file = checkpoint_dir / f"workday_jobs_discovery_{partition_key}_checkpoint.csv"
+    failed_companies_file = checkpoint_dir / f"workday_jobs_discovery_{partition_key}_failed.csv"
 
     context.log.info(f"Using checkpoint file: {checkpoint_file}")
 
@@ -87,8 +89,8 @@ def bamboohr_company_jobs_discovery(context: AssetExecutionContext, config: Bamb
     query = f"""
     SELECT company_id, company_name, company_industry, career_url, ats_url
     FROM {dataset_name}.master_company_urls
-    WHERE platform = 'bamboohr'
-    AND ats_url IS NOT NULL
+    WHERE platform = 'workday'
+    AND (ats_url IS NOT NULL OR career_url IS NOT NULL)
     AND url_verified = TRUE
     {letter_filter}
     """
@@ -113,7 +115,35 @@ def bamboohr_company_jobs_discovery(context: AssetExecutionContext, config: Bamb
         return {"error": str(e), "status": "failed"}
 
     total_companies = len(companies_df)
-    context.log.info(f"Found {total_companies} BambooHR companies in partition {partition_key} to process")
+    context.log.info(f"Found {total_companies} Workday companies in partition {partition_key} to process")
+
+    # Create workday_jobs table if it doesn't exist
+    create_table_sql = f"""
+    CREATE TABLE IF NOT EXISTS {dataset_name}.workday_jobs (
+        job_id STRING,
+        company_id STRING,
+        job_title STRING,
+        job_description STRING,
+        job_url STRING,
+        location STRING,
+        time_type STRING,
+        employment_type STRING,
+        published_at DATE,
+        valid_through DATE,
+        date_retrieved TIMESTAMP,
+        is_active BOOL,
+        raw_data STRING,
+        partition_key STRING
+    )
+    """
+
+    try:
+        query_job = client.query(create_table_sql)
+        query_job.result()
+        context.log.info("Created or verified workday_jobs table in BigQuery")
+    except Exception as e:
+        context.log.error(f"Error creating jobs table: {str(e)}")
+        return {"error": str(e), "status": "failed"}
 
     # Track processing statistics
     stats = {
@@ -131,35 +161,19 @@ def bamboohr_company_jobs_discovery(context: AssetExecutionContext, config: Bamb
 
     # Resume from checkpoint if exists
     processed_company_ids = set()
-    if checkpoint_file.exists():
+    checkpoint_results = []
+    failed_companies = []
+
+    if checkpoint_file.exists() and not config.skip_processed_companies:
         try:
             checkpoint_df = pd.read_csv(checkpoint_file)
             processed_company_ids = set(checkpoint_df["company_id"].astype(str).tolist())
+            checkpoint_results = checkpoint_df.to_dict("records")
             context.log.info(f"Loaded {len(processed_company_ids)} previously processed companies from checkpoint")
-
-            # Update stats from checkpoint
-            stats["companies_processed"] = len(processed_company_ids)
-            if "jobs_found" in checkpoint_df.columns:
-                stats["total_jobs_found"] = checkpoint_df["jobs_found"].sum()
-            if "jobs_added" in checkpoint_df.columns:
-                stats["new_jobs_added"] = checkpoint_df["jobs_added"].sum()
-            if "jobs_updated" in checkpoint_df.columns:
-                stats["updated_jobs"] = checkpoint_df["jobs_updated"].sum()
-
         except Exception as e:
             context.log.error(f"Error loading checkpoint file: {str(e)}")
 
-    # Skip already processed companies if configured to do so
-    if config.skip_processed_companies and checkpoint_file.exists():
-        companies_to_process = companies_df[~companies_df["company_id"].astype(str).isin(processed_company_ids)]
-        context.log.info(f"{len(companies_to_process)} BambooHR companies remaining to process after skipping processed ones")
-    else:
-        # Process all companies, even those previously processed
-        companies_to_process = companies_df
-        context.log.info(f"Processing all {len(companies_to_process)} BambooHR companies in this partition")
-
-    # Load previously failed companies
-    failed_companies = []
+    # Load previously failed companies if file exists
     if failed_companies_file.exists():
         try:
             failed_df = pd.read_csv(failed_companies_file)
@@ -168,44 +182,17 @@ def bamboohr_company_jobs_discovery(context: AssetExecutionContext, config: Bamb
         except Exception as e:
             context.log.error(f"Error loading failed companies file: {str(e)}")
 
-    # Create jobs table if it doesn't exist
-    create_table_sql = f"""
-    CREATE TABLE IF NOT EXISTS {dataset_name}.bamboohr_jobs (
-        job_id STRING,
-        company_id STRING,
-        job_title STRING,
-        job_description STRING,
-        job_url STRING,
-        location STRING,
-        department STRING,
-        employment_status STRING,
-        date_posted DATE,
-        date_retrieved TIMESTAMP,
-        is_active BOOL,
-        raw_data STRING,
-        partition_key STRING
-    )
-    """
+    # Filter out already processed companies
+    if not config.skip_processed_companies:
+        companies_to_process = companies_df[~companies_df["company_id"].astype(str).isin(processed_company_ids)]
+        context.log.info(f"{len(companies_to_process)} companies remaining to process")
+    else:
+        companies_to_process = companies_df
+        context.log.info(f"Processing all {len(companies_to_process)} companies (ignoring checkpoint)")
 
-    try:
-        query_job = client.query(create_table_sql)
-        query_job.result()
-        context.log.info("Created or verified bamboohr_jobs table in BigQuery")
-    except Exception as e:
-        context.log.error(f"Error creating jobs table: {str(e)}")
-        return {"error": str(e), "status": "failed"}
-
-    # Process companies in batches
+    # Get batch size from config
     batch_size = config.batch_size
     new_failed_companies = []
-    checkpoint_results = []
-
-    # Load previous checkpoint results if exists
-    if checkpoint_file.exists():
-        try:
-            checkpoint_results = pd.read_csv(checkpoint_file).to_dict("records")
-        except Exception:
-            checkpoint_results = []
 
     # Process companies in batches
     for i in range(0, len(companies_to_process), batch_size):
@@ -219,13 +206,16 @@ def bamboohr_company_jobs_discovery(context: AssetExecutionContext, config: Bamb
 
         # Process each company in batch
         for _, company in batch.iterrows():
-            company_id = company["company_id"]
+            company_id = str(company["company_id"])
             company_name = company["company_name"]
             career_url = company["career_url"]
             ats_url = company["ats_url"]
 
             context.log.info(f"Processing jobs for {company_name} (ID: {company_id})")
-            context.log.info(f"Using ATS URL: {ats_url}")
+
+            # Use ATS URL if available, otherwise fall back to career URL
+            url_to_use = ats_url if ats_url else career_url
+            context.log.info(f"Using URL: {url_to_use}")
 
             # Track company results for checkpoint
             company_result = {
@@ -240,15 +230,13 @@ def bamboohr_company_jobs_discovery(context: AssetExecutionContext, config: Bamb
             }
 
             try:
-                # Create BambooHR scraper
-                scraper = BambooHRScraper(
-                    career_url=career_url,
+                # Create Workday scraper
+                scraper = WorkdayScraper(
+                    career_url=url_to_use,
                     rate_limit=config.rate_limit,
                     max_retries=config.max_retries,
                     retry_delay=config.retry_delay,
-                    dagster_log=context.log,  # Pass Dagster logger to the scraper
-                    ats_url=ats_url,  # Pass the BambooHR ATS URL
-                    cutoff_date=cutoff_date  # Pass the cutoff date to the scraper
+                    dagster_log=context.log  # Pass Dagster logger to the scraper
                 )
 
                 # Get all job listings
@@ -268,83 +256,112 @@ def bamboohr_company_jobs_discovery(context: AssetExecutionContext, config: Bamb
                 company_jobs_added = 0
                 company_jobs_updated = 0
 
+                # Check which jobs already exist in BigQuery
+                if len(job_listings) > 0:
+                    job_ids = [job.get("job_id") for job in job_listings if job.get("job_id")]
+                    # Remove None and empty values
+                    job_ids = [job_id for job_id in job_ids if job_id]
+
+                    existing_jobs = {}
+                    if job_ids:
+                        # Format IDs for the query with proper quoting
+                        job_ids_str = ", ".join([f"'{job_id}'" for job_id in job_ids])
+                        existing_query = f"""
+                        SELECT job_id, is_active, date_retrieved
+                        FROM {dataset_name}.workday_jobs
+                        WHERE company_id = '{company_id}'
+                        AND job_id IN ({job_ids_str})
+                        """
+
+                        try:
+                            existing_job_rows = client.query(existing_query).result()
+                            for row in existing_job_rows:
+                                existing_jobs[row.job_id] = {
+                                    "is_active": row.is_active,
+                                    "date_retrieved": row.date_retrieved
+                                }
+                            context.log.info(f"Found {len(existing_jobs)} existing jobs for {company_name}")
+                        except Exception as e:
+                            context.log.error(f"Error querying existing jobs: {str(e)}")
+
                 # Process each job listing
                 for job in job_listings:
+                    # Extract job data
                     job_id = job.get("job_id")
-                    job_url = job.get("job_url")
+                    job_title = job.get("job_title", "")
+                    job_url = job.get("job_url", "")
+                    location = job.get("location", "")
+                    time_type = job.get("time_type", "")
+                    posted_on = job.get("posted_on", "")
+                    raw_data = job.get("raw_data", "{}")
 
-                    if not job_id or not job_url:
+                    # Skip jobs without ID
+                    if not job_id:
+                        context.log.warning(f"Skipping job without ID: {job_title}")
                         continue
 
-                    # Get detailed job info unless skipped in config
-                    job_details = job
+                    # Check if job already exists
+                    existing_job = existing_jobs.get(job_id)
+
+                    # Get detailed job info if needed
+                    job_description = ""
+                    employment_type = ""
+                    date_posted = ""
+                    valid_through = ""
+
                     if not config.skip_detailed_fetch:
                         try:
-                            job_details = scraper.get_job_details(job_id)
-                            # Add short delay to avoid overwhelming the server
-                            time.sleep(0.5)
+                            context.log.info(f"Fetching details for job: {job_title}")
+                            job_details = scraper.get_job_details(job_url)
+
+                            # Extract additional details
+                            job_description = job_details.get("job_description", "")
+                            date_posted = job_details.get("date_posted", "")
+                            valid_through = job_details.get("valid_through", "")
+                            employment_type = job_details.get("employment_type", "")
+
+                            # Update with more detailed raw data if available
+                            if job_details.get("raw_data"):
+                                raw_data = job_details.get("raw_data")
+
+                            # Add a delay to avoid rate limiting
+                            time.sleep(config.rate_limit / 2)  # Half the regular rate limit
                         except Exception as e:
-                            context.log.warning(f"Error getting details for job {job_id}: {str(e)}")
-                            # Use basic info if detailed fetch fails
-                            job_details = job
+                            context.log.error(f"Error fetching job details: {str(e)}")
 
-                    # Check posting date if available
-                    date_posted = job_details.get("date_posted")
-                    is_recent = True
+                    # Try to parse date from different formats
+                    published_at = None
 
+                    # Try to extract date from posted_on text (e.g., "Posted 3 Days Ago")
+                    if posted_on:
+                        days_ago_match = re.search(r'Posted (\d+) Days? Ago', posted_on)
+                        if days_ago_match:
+                            days_ago = int(days_ago_match.group(1))
+                            published_at = (datetime.now() - timedelta(days=days_ago)).strftime("%Y-%m-%d")
+                        elif "Posted Today" in posted_on:
+                            published_at = datetime.now().strftime("%Y-%m-%d")
+                        elif "Posted Yesterday" in posted_on:
+                            published_at = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+                        elif "Posted 30+ Days Ago" in posted_on:
+                            # Estimate as 30 days ago
+                            published_at = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+
+                    # If we got a date_posted from detail page, use that instead
                     if date_posted:
+                        published_at = date_posted
+
+                    # Skip old jobs based on cutoff date if we have a date
+                    if published_at:
                         try:
-                            posted_date = datetime.strptime(date_posted, "%Y-%m-%d")
-                            is_recent = posted_date >= cutoff_date
-                        except (ValueError, TypeError):
-                            # If we can't parse the date, assume it's recent
-                            is_recent = True
-
-                    # Skip old jobs
-                    if not is_recent:
-                        stats["old_jobs_skipped"] += 1
-                        continue
-
-                    stats["recent_jobs"] += 1
-
-                    # Check if job already exists in BigQuery
-                    check_sql = f"""
-                    SELECT job_id
-                    FROM {dataset_name}.bamboohr_jobs
-                    WHERE job_url = '{job_url}'
-                    """
-
-                    try:
-                        query_job = client.query(check_sql)
-                        existing_job = list(query_job.result())
-                    except Exception as e:
-                        context.log.error(f"Error checking if job exists: {str(e)}")
-                        existing_job = []
-
-                    # Prepare job data
-                    job_title = job_details.get("job_title", "")
-                    job_description = job_details.get("job_description", "")
-                    department = job_details.get("department", "")
-                    employment_status = job_details.get("employment_status", "")
-
-                    # Handle location data
-                    location_str = None
-                    if job_details.get("location_string"):
-                        location_str = job_details["location_string"]
-                    elif isinstance(job_details.get("location"), dict):
-                        loc_parts = []
-                        loc = job_details["location"]
-                        if loc.get("city"):
-                            loc_parts.append(loc["city"])
-                        if loc.get("state"):
-                            loc_parts.append(loc["state"])
-                        if loc_parts:
-                            location_str = ", ".join(loc_parts)
-
-                    # Convert any structured data to JSON strings
-                    raw_data = None
-                    if "raw_data" in job_details:
-                        raw_data = json.dumps(job_details["raw_data"])
+                            job_date = datetime.strptime(published_at, "%Y-%m-%d")
+                            if job_date < cutoff_date:
+                                context.log.info(f"Skipping old job: {job_title} (posted {published_at})")
+                                stats["old_jobs_skipped"] += 1
+                                continue
+                            else:
+                                stats["recent_jobs"] += 1
+                        except Exception as e:
+                            context.log.warning(f"Error parsing job date: {str(e)}")
 
                     # Prepare job record
                     job_record = {
@@ -353,10 +370,11 @@ def bamboohr_company_jobs_discovery(context: AssetExecutionContext, config: Bamb
                         "job_title": job_title,
                         "job_description": job_description,
                         "job_url": job_url,
-                        "location": location_str,
-                        "department": department,
-                        "employment_status": employment_status,
-                        "date_posted": date_posted,
+                        "location": location,
+                        "time_type": time_type,
+                        "employment_type": employment_type,
+                        "published_at": published_at,
+                        "valid_through": valid_through,
                         "date_retrieved": datetime.now().isoformat(),
                         "is_active": True,
                         "raw_data": raw_data,
@@ -383,33 +401,34 @@ def bamboohr_company_jobs_discovery(context: AssetExecutionContext, config: Bamb
 
             except Exception as e:
                 context.log.error(f"Error processing company {company_name}: {str(e)}")
-                stats["errors"] += 1
-
-                # Update company result for checkpoint with error
                 company_result["status"] = "error"
                 company_result["error"] = str(e)
+                stats["errors"] += 1
 
-                # Add to failed companies
-                failed_entry = {
+                # Add to failed companies list
+                new_failed_companies.append({
                     "company_id": company_id,
                     "company_name": company_name,
                     "error": str(e),
                     "timestamp": datetime.now().isoformat(),
                     "partition_key": partition_key
-                }
-                new_failed_companies.append(failed_entry)
+                })
 
-            # Add company result to checkpoint results
+            # Update stats and checkpoints
+            stats["companies_processed"] += 1
             checkpoint_results.append(company_result)
 
-            # Increment counter
-            stats["companies_processed"] += 1
+            # Save checkpoint after each company for resumability
+            try:
+                pd.DataFrame(checkpoint_results).to_csv(checkpoint_file, index=False)
+            except Exception as e:
+                context.log.error(f"Error saving checkpoint: {str(e)}")
 
         # Insert jobs from this batch to BigQuery
         if batch_jobs:
             try:
                 # Create a temporary table for bulk loading
-                temp_table_name = f"{dataset_name}.bamboohr_jobs_temp"
+                temp_table_name = f"{dataset_name}.workday_jobs_temp"
 
                 # Drop the temp table if it exists
                 query_job = client.query(f"DROP TABLE IF EXISTS {temp_table_name}")
@@ -424,9 +443,10 @@ def bamboohr_company_jobs_discovery(context: AssetExecutionContext, config: Bamb
                     job_description STRING,
                     job_url STRING,
                     location STRING,
-                    department STRING,
-                    employment_status STRING,
-                    date_posted DATE,
+                    time_type STRING,
+                    employment_type STRING,
+                    published_at DATE,
+                    valid_through DATE,
                     date_retrieved TIMESTAMP,
                     is_active BOOL,
                     raw_data STRING,
@@ -439,13 +459,21 @@ def bamboohr_company_jobs_discovery(context: AssetExecutionContext, config: Bamb
                 # Convert list of dicts to dataframe
                 jobs_df = pd.DataFrame(batch_jobs)
 
-                # Handle data types
+                # Handle data types - ensure all IDs are strings
+                for col in jobs_df.columns:
+                    if col.endswith('_id') or col == 'job_id' or col == 'company_id':
+                        jobs_df[col] = jobs_df[col].astype(str)
+
+                # Handle other object columns
                 for col in jobs_df.select_dtypes(include=['object']).columns:
                     jobs_df[col] = jobs_df[col].fillna('').astype(str)
 
                 # Convert date columns
-                if 'date_posted' in jobs_df.columns:
-                    jobs_df['date_posted'] = pd.to_datetime(jobs_df['date_posted'], errors='coerce')
+                if 'published_at' in jobs_df.columns:
+                    jobs_df['published_at'] = pd.to_datetime(jobs_df['published_at'], errors='coerce')
+
+                if 'valid_through' in jobs_df.columns:
+                    jobs_df['valid_through'] = pd.to_datetime(jobs_df['valid_through'], errors='coerce')
 
                 if 'date_retrieved' in jobs_df.columns:
                     jobs_df['date_retrieved'] = pd.to_datetime(jobs_df['date_retrieved'], errors='coerce')
@@ -460,9 +488,10 @@ def bamboohr_company_jobs_discovery(context: AssetExecutionContext, config: Bamb
                         bigquery.SchemaField("job_description", "STRING"),
                         bigquery.SchemaField("job_url", "STRING"),
                         bigquery.SchemaField("location", "STRING"),
-                        bigquery.SchemaField("department", "STRING"),
-                        bigquery.SchemaField("employment_status", "STRING"),
-                        bigquery.SchemaField("date_posted", "DATE"),
+                        bigquery.SchemaField("time_type", "STRING"),
+                        bigquery.SchemaField("employment_type", "STRING"),
+                        bigquery.SchemaField("published_at", "DATE"),
+                        bigquery.SchemaField("valid_through", "DATE"),
                         bigquery.SchemaField("date_retrieved", "TIMESTAMP"),
                         bigquery.SchemaField("is_active", "BOOL"),
                         bigquery.SchemaField("raw_data", "STRING"),
@@ -471,71 +500,65 @@ def bamboohr_company_jobs_discovery(context: AssetExecutionContext, config: Bamb
                 )
 
                 # Load the dataframe into the temporary table
-                load_job = client.load_table_from_dataframe(
+                job = client.load_table_from_dataframe(
                     jobs_df,
                     temp_table_name,
                     job_config=job_config
                 )
-                load_job.result()
+                # Wait for the load job to complete
+                job.result()
+                context.log.info(f"Loaded {len(jobs_df)} jobs into temporary table")
 
-                # Insert only new jobs (not already in the main table)
+                # Insert new jobs into the main table
                 insert_sql = f"""
-                INSERT INTO {dataset_name}.bamboohr_jobs (
-                    job_id, company_id, job_title, job_description, job_url,
-                    location, department, employment_status, date_posted,
-                    date_retrieved, is_active, raw_data, partition_key
-                )
-                SELECT
-                    t.job_id, t.company_id, t.job_title, t.job_description, t.job_url,
-                    t.location, t.department, t.employment_status, t.date_posted,
-                    t.date_retrieved, t.is_active, t.raw_data, t.partition_key
-                FROM {temp_table_name} t
-                LEFT JOIN {dataset_name}.bamboohr_jobs j
-                    ON t.job_url = j.job_url
-                WHERE j.job_url IS NULL
+                INSERT INTO {dataset_name}.workday_jobs
+                SELECT * FROM {temp_table_name}
                 """
-
                 query_job = client.query(insert_sql)
                 query_job.result()
+                context.log.info(f"Inserted {len(jobs_df)} new jobs into main table")
 
-                # Update existing jobs
-                update_sql = f"""
-                UPDATE {dataset_name}.bamboohr_jobs j
-                SET
-                    j.job_title = t.job_title,
-                    j.job_description = t.job_description,
-                    j.location = t.location,
-                    j.department = t.department,
-                    j.employment_status = t.employment_status,
-                    j.date_posted = t.date_posted,
-                    j.date_retrieved = t.date_retrieved,
-                    j.is_active = t.is_active,
-                    j.raw_data = t.raw_data,
-                    j.partition_key = t.partition_key
-                FROM {temp_table_name} t
-                WHERE j.job_url = t.job_url
-                """
-
-                query_job = client.query(update_sql)
-                query_job.result()
-
-                # Drop the temporary table
+                # Clean up - drop the temporary table
                 query_job = client.query(f"DROP TABLE IF EXISTS {temp_table_name}")
                 query_job.result()
 
-                context.log.info(f"Successfully loaded batch of {len(batch_jobs)} jobs into BigQuery")
-
             except Exception as e:
-                context.log.error(f"Error loading jobs to BigQuery: {str(e)}")
-                stats["errors"] += 1
+                context.log.error(f"Error inserting jobs into BigQuery: {str(e)}")
+                import traceback
+                context.log.error(f"Traceback: {traceback.format_exc()}")
 
-        # Save checkpoint after each batch
-        try:
-            checkpoint_df = pd.DataFrame(checkpoint_results)
-            checkpoint_df.to_csv(checkpoint_file, index=False)
-            context.log.info(f"Updated checkpoint with {len(checkpoint_results)} companies")
-        except Exception as e:
-            context.log.error(f"Error saving checkpoint: {str(e)}")
+        # Update existing jobs to mark them as still active
+        if stats["updated_jobs"] > 0:
+            try:
+                # Get job IDs from this batch
+                company_ids = batch["company_id"].astype(str).tolist()
+                company_ids_str = ", ".join([f"'{company_id}'" for company_id in company_ids])
+
+                # Extract unique job IDs for active jobs
+                active_job_ids = []
+                for job in job_listings:
+                    if job.get("job_id") and job.get("job_id") in existing_jobs:
+                        active_job_ids.append(job.get("job_id"))
+
+                if active_job_ids:
+                    # Format for SQL query
+                    job_ids_str = ", ".join([f"'{job_id}'" for job_id in active_job_ids])
+
+                    # Update existing jobs
+                    update_sql = f"""
+                    UPDATE {dataset_name}.workday_jobs
+                    SET
+                        date_retrieved = CURRENT_TIMESTAMP(),
+                        is_active = TRUE
+                    WHERE company_id IN ({company_ids_str})
+                    AND job_id IN ({job_ids_str})
+                    """
+
+                    query_job = client.query(update_sql)
+                    query_job.result()
+                    context.log.info(f"Updated {len(active_job_ids)} existing jobs")
+            except Exception as e:
+                context.log.error(f"Error updating existing jobs: {str(e)}")
 
         # Save failed companies if any new failures
         if new_failed_companies:
@@ -564,45 +587,50 @@ def bamboohr_company_jobs_discovery(context: AssetExecutionContext, config: Bamb
             )
         )
 
+    # Mark inactive jobs (if we found at least one job for a company)
+    if stats["companies_with_jobs"] > 0:
+        try:
+            # Get all companies that were successfully processed
+            processed_company_ids = []
+            for result in checkpoint_results:
+                if result.get("status") == "success" and result.get("jobs_found", 0) > 0:
+                    processed_company_ids.append(result.get("company_id"))
+
+            if processed_company_ids:
+                # Format for SQL
+                company_ids_str = ", ".join([f"'{company_id}'" for company_id in processed_company_ids])
+
+                # Mark jobs as inactive if they weren't seen in this run
+                current_date = datetime.now().strftime("%Y-%m-%d")
+                inactivate_sql = f"""
+                UPDATE {dataset_name}.workday_jobs
+                SET is_active = FALSE
+                WHERE company_id IN ({company_ids_str})
+                AND date_retrieved < '{current_date}'
+                AND is_active = TRUE
+                """
+
+                query_job = client.query(inactivate_sql)
+                result = query_job.result()
+
+                # Get count of affected rows
+                inactive_count = query_job.num_dml_affected_rows
+                context.log.info(f"Marked {inactive_count} jobs as inactive")
+                stats["jobs_marked_inactive"] = inactive_count
+        except Exception as e:
+            context.log.error(f"Error marking inactive jobs: {str(e)}")
+
     # Log summary stats
-    context.log.info(f"BambooHR job discovery complete for partition {partition_key}. Stats:")
+    context.log.info(f"Workday job discovery complete for partition {partition_key}. Stats:")
     context.log.info(f"Total companies: {stats['total_companies']}")
     context.log.info(f"Companies processed: {stats['companies_processed']}")
     context.log.info(f"Companies with jobs: {stats['companies_with_jobs']}")
     context.log.info(f"Total jobs found: {stats['total_jobs_found']}")
     context.log.info(f"New jobs added: {stats['new_jobs_added']}")
     context.log.info(f"Jobs updated: {stats['updated_jobs']}")
-    context.log.info(f"Recent jobs: {stats['recent_jobs']}")
-    context.log.info(f"Old jobs skipped: {stats['old_jobs_skipped']}")
+    if "jobs_marked_inactive" in stats:
+        context.log.info(f"Jobs marked inactive: {stats['jobs_marked_inactive']}")
     context.log.info(f"Errors: {stats['errors']}")
-
-    # Convert any NumPy integers to Python integers
-    # This is needed because Dagster's MetadataValue.int() doesn't accept NumPy types
-    for key, value in stats.items():
-        if hasattr(value, 'dtype') and 'int' in str(value.dtype):
-            stats[key] = int(value)
-        elif isinstance(value, (list, dict)):
-            # If we have nested structures, convert those too
-            context.log.info(f"Converting complex stat: {key}, type: {type(value)}")
-
-    # Update job count in BigQuery
-    try:
-        query_job = client.query(f"SELECT COUNT(*) FROM {dataset_name}.bamboohr_jobs WHERE partition_key = '{partition_key}'")
-        count_result = list(query_job.result())
-        partition_jobs = count_result[0][0]
-        context.log.info(f"Jobs in BigQuery table for partition {partition_key}: {partition_jobs}")
-
-        # Get total job count too
-        query_job = client.query(f"SELECT COUNT(*) FROM {dataset_name}.bamboohr_jobs")
-        count_result = list(query_job.result())
-        total_jobs = count_result[0][0]
-        context.log.info(f"Total jobs in BigQuery table: {total_jobs}")
-
-        # Add to stats - ensure they're Python ints
-        stats["jobs_in_partition"] = int(partition_jobs)
-        stats["total_jobs_in_table"] = int(total_jobs)
-    except Exception as e:
-        context.log.error(f"Error getting job count: {str(e)}")
 
     # Add metadata to the output
     context.add_output_metadata({
@@ -613,7 +641,20 @@ def bamboohr_company_jobs_discovery(context: AssetExecutionContext, config: Bamb
         "new_jobs_added": MetadataValue.int(int(stats["new_jobs_added"])),
         "jobs_updated": MetadataValue.int(int(stats["updated_jobs"])),
         "partition_key": MetadataValue.text(partition_key),
-        "bigquery_table": MetadataValue.text(f"{dataset_name}.bamboohr_jobs")
+        "bigquery_table": MetadataValue.text(f"{dataset_name}.workday_jobs")
     })
 
     return stats
+
+# Create a job definition for this asset
+workday_jobs_discovery_job = define_asset_job(
+    name="workday_jobs_discovery_job",
+    selection=[workday_company_jobs_discovery],
+    description="Discovers and loads job listings from Workday career sites"
+)
+
+# Create the Dagster definitions
+defs = Definitions(
+    assets=[workday_company_jobs_discovery],
+    jobs=[workday_jobs_discovery_job]
+)

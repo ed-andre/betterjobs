@@ -1,9 +1,10 @@
 import re
 import json
 import logging
-from typing import Dict, List, Optional
-from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
-import time
+import requests
+from typing import Dict, List, Optional, Any
+from datetime import datetime
+from urllib.parse import urlparse, urljoin
 from bs4 import BeautifulSoup
 
 from dagster_betterjobs.scrapers.base_scraper import BaseScraper
@@ -16,141 +17,219 @@ class WorkdayScraper(BaseScraper):
     career portals to extract job listings and details.
     """
 
-    def __init__(self, career_url: str, **kwargs):
+    def __init__(self, career_url: str, dagster_log=None, **kwargs):
         """
         Initialize the Workday scraper.
 
         Args:
             career_url: Base URL of the Workday career site
+            dagster_log: Optional Dagster logger for integration
             **kwargs: Additional arguments to pass to BaseScraper
         """
         super().__init__(**kwargs)
         self.career_url = self.normalize_url(career_url)
         self.domain = self.get_domain(self.career_url)
+        self.tenant_id = None
+        self.site_id = None
+        self.dagster_log = dagster_log
+        self._extract_workday_ids()
 
-    def _get_site_id(self) -> Optional[str]:
-        """Extract the Workday site ID from the career page."""
-        try:
-            response = self.make_request(self.career_url)
-
-            # Look for the site ID in the HTML
-            match = re.search(r'tenantId=([^&"\']+)', response.text)
-            if match:
-                return match.group(1)
-
-            # Try to find it in a different format
-            match = re.search(r'"siteId":\s*"([^"]+)"', response.text)
-            if match:
-                return match.group(1)
-
-            # Look for it in script tags
-            soup = BeautifulSoup(response.text, 'html.parser')
-            scripts = soup.find_all('script')
-
-            for script in scripts:
-                if script.string:
-                    match = re.search(r'tenantId\s*=\s*[\'"]([^\'"]+)[\'"]', script.string)
-                    if match:
-                        return match.group(1)
-
-            return None
-
-        except Exception as e:
-            logging.error(f"Error extracting site ID: {str(e)}")
-            return None
-
-    def _build_search_url(self, keyword: str, location: Optional[str] = None) -> str:
-        """Build the API URL for job searching based on site analysis."""
-        # Parse the base career URL
-        parsed_url = urlparse(self.career_url)
-
-        # Determine if this is a standard Workday URL format
-        if 'myworkdayjobs.com' in parsed_url.netloc:
-            base_path = '/'.join(parsed_url.path.strip('/').split('/')[:2])
-            search_path = f"{base_path}/jobs/search"
-
-            query_params = {
-                'locations': location,
-                'q': keyword
-            }
-            # Filter out None values
-            query_params = {k: v for k, v in query_params.items() if v is not None}
-
-            # Rebuild the URL
-            search_url = urlunparse((
-                parsed_url.scheme,
-                parsed_url.netloc,
-                search_path,
-                '',
-                urlencode(query_params),
-                ''
-            ))
-            return search_url
+    def log_message(self, level: str, message: str):
+        """Log a message using the Dagster logger if available, or the standard logging module."""
+        if self.dagster_log:
+            if level == "info":
+                self.dagster_log.info(message)
+            elif level == "warning":
+                self.dagster_log.warning(message)
+            elif level == "error":
+                self.dagster_log.error(message)
+            elif level == "debug":
+                self.dagster_log.debug(message)
         else:
-            # For custom Workday implementations, fall back to the base URL
-            return self.career_url
+            if level == "info":
+                logging.info(message)
+            elif level == "warning":
+                logging.warning(message)
+            elif level == "error":
+                logging.error(message)
+            elif level == "debug":
+                logging.debug(message)
 
-    def search_jobs(self, keyword: str, location: Optional[str] = None) -> List[Dict]:
+    def _extract_workday_ids(self) -> None:
+        """Extract the Workday tenant ID and site ID from the career URL."""
+        try:
+            # Parse the career URL to extract tenant and site IDs
+            parsed_url = urlparse(self.career_url)
+            path_parts = parsed_url.path.strip('/').split('/')
+
+            if 'myworkdayjobs.com' in parsed_url.netloc:
+                # Extract tenant from subdomain (e.g., allianceground.wd1.myworkdayjobs.com)
+                self.tenant_id = parsed_url.netloc.split('.')[0]
+
+                # Extract site ID from path (e.g., /en-US/agi_careers)
+                if len(path_parts) >= 2:
+                    # The site ID is typically the last part of the path
+                    self.site_id = path_parts[-1]
+
+                self.log_message("info", f"Extracted tenant_id: {self.tenant_id}, site_id: {self.site_id}")
+            else:
+                self.log_message("warning", f"Not a standard Workday URL: {self.career_url}")
+        except Exception as e:
+            self.log_message("error", f"Error extracting Workday IDs: {str(e)}")
+
+    def _build_jobs_api_url(self) -> str:
+        """Build the API URL for job searching."""
+        # The URL format should be: https://{tenant}.wd1.myworkdayjobs.com/wday/cxs/{tenant}/{site_id}/jobs
+        if not self.tenant_id or not self.site_id:
+            self.log_message("warning", "Tenant ID or Site ID not available")
+            return None
+
+        parsed_url = urlparse(self.career_url)
+        api_url = f"{parsed_url.scheme}://{parsed_url.netloc}/wday/cxs/{self.tenant_id}/{self.site_id}/jobs"
+        return api_url
+
+    def _build_job_detail_url(self, external_path: str) -> str:
+        """Build the job detail URL using the same base pattern as the API."""
+        if not self.tenant_id or not self.site_id:
+            self.log_message("warning", "Tenant ID or Site ID not available")
+            return None
+
+        parsed_url = urlparse(self.career_url)
+        # The job URL should follow the same pattern as the API URL, but external_path already includes /job/
+        return f"{parsed_url.scheme}://{parsed_url.netloc}/wday/cxs/{self.tenant_id}/{self.site_id}{external_path}"
+
+    def search_jobs(self, keyword: str = "", location: str = "") -> List[Dict]:
         """
         Search for jobs on a Workday career site.
 
         Args:
-            keyword: Search term (e.g., "SQL Developer")
+            keyword: Optional search term
             location: Optional location filter
 
         Returns:
             List of job dictionaries with basic information
         """
-        search_url = self._build_search_url(keyword, location)
-        jobs = []
-
+        # First, get the initial page to obtain necessary cookies and tokens
         try:
-            response = self.make_request(search_url)
-            soup = BeautifulSoup(response.text, 'html.parser')
+            initial_response = self.make_request(
+                url=self.career_url,
+                method="GET",
+                headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36 Edg/135.0.0.0"
+                }
+            )
 
-            # Find job listings - Workday typically uses these patterns
-            job_elements = soup.select('.WDVH-job-card, .WL5F-job-card, .job-listing-card, [data-automation-id="jobCard"]')
+            # Extract CSRF token from cookies or response
+            csrf_token = None
+            for cookie in initial_response.cookies:
+                if cookie.name == "CALYPSO_CSRF_TOKEN":
+                    csrf_token = cookie.value
+                    break
 
-            if not job_elements:
-                # Try alternative selectors
-                job_elements = soup.select('.job-card, .jobCard, .WLJD-job-row')
+            # Build the API URL
+            api_url = self._build_jobs_api_url()
+            if not api_url:
+                self.log_message("error", f"Could not build API URL for {self.career_url}")
+                return []
 
-            for job_element in job_elements:
-                job = {}
+            self.log_message("info", f"Using Workday API URL: {api_url}")
 
-                # Extract job title
-                title_elem = job_element.select_one('.job-title, .jobTitle, [data-automation-id="jobTitle"]')
-                if title_elem:
-                    job['job_title'] = title_elem.text.strip()
-                else:
-                    # Try alternate patterns
-                    title_elem = job_element.select_one('a[data-automation-id]')
-                    if title_elem:
-                        job['job_title'] = title_elem.text.strip()
+            # Prepare the request payload - exactly match the format from cURL
+            payload = {
+                "appliedFacets": {},
+                "limit": 20,
+                "offset": 0,
+                "searchText": ""
+            }
 
-                # Extract job link
-                link_elem = job_element.select_one('a[href*="job_apply"]')
-                if link_elem and 'href' in link_elem.attrs:
-                    job_url = link_elem['href']
-                    # Handle relative URLs
-                    if job_url.startswith('/'):
-                        parsed = urlparse(self.career_url)
-                        job_url = f"{parsed.scheme}://{parsed.netloc}{job_url}"
-                    job['job_url'] = job_url
+            # Set up headers to match the successful cURL request
+            headers = {
+                "accept": "application/json",
+                "accept-language": "en-US",
+                "cache-control": "no-cache",
+                "content-type": "application/json",
+                "dnt": "1",
+                "origin": self.career_url.rstrip('/'),
+                "pragma": "no-cache",
+                "referer": self.career_url,
+                "sec-ch-ua": '"Microsoft Edge";v="135", "Not-A.Brand";v="8", "Chromium";v="135"',
+                "sec-ch-ua-mobile": "?0",
+                "sec-ch-ua-platform": '"Windows"',
+                "sec-fetch-dest": "empty",
+                "sec-fetch-mode": "cors",
+                "sec-fetch-site": "same-origin",
+                "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36 Edg/135.0.0.0"
+            }
 
-                # Extract location
-                location_elem = job_element.select_one('.job-location, .jobLocation, [data-automation-id="jobLocation"]')
-                if location_elem:
-                    job['location'] = location_elem.text.strip()
+            # Add CSRF token if found
+            if csrf_token:
+                headers["x-calypso-csrf-token"] = csrf_token
 
-                # Only add job with required fields
-                if 'job_title' in job and 'job_url' in job:
-                    jobs.append(job)
+            jobs = []
 
-            return jobs
+            try:
+                # Make the API request
+                response = self.make_request(
+                    url=api_url,
+                    method="POST",
+                    headers=headers,
+                    json=payload,
+                    allow_redirects=True
+                )
+
+                # Parse the JSON response
+                data = response.json()
+
+                if "jobPostings" not in data:
+                    self.log_message("warning", f"No jobPostings found in response: {data.keys()}")
+                    return jobs
+
+                job_postings = data.get("jobPostings", [])
+                self.log_message("info", f"Found {len(job_postings)} job postings")
+
+                # Process each job posting
+                for job in job_postings:
+                    job_title = job.get("title", "")
+                    external_path = job.get("externalPath", "")
+                    time_type = job.get("timeType", "")
+                    locations_text = job.get("locationsText", "")
+                    posted_on = job.get("postedOn", "")
+                    bullet_fields = job.get("bulletFields", [])
+
+                    # Extract job ID from bullet fields (usually the first one) or from externalPath
+                    job_id = None
+                    if bullet_fields and len(bullet_fields) > 0:
+                        job_id = bullet_fields[0]
+                    else:
+                        # Try to extract job ID from the path
+                        id_match = re.search(r'_([A-Z0-9\-]+)$', external_path)
+                        if id_match:
+                            job_id = id_match.group(1)
+
+                    # Build the full job URL using the API base pattern
+                    job_url = self._build_job_detail_url(external_path) if external_path else None
+
+                    # Create job record
+                    if job_title and job_url:
+                        job_record = {
+                            "job_id": job_id,
+                            "job_title": job_title,
+                            "job_url": job_url,
+                            "location": locations_text,
+                            "time_type": time_type,
+                            "posted_on": posted_on,
+                            "raw_data": json.dumps(job)
+                        }
+                        jobs.append(job_record)
+
+                return jobs
+
+            except Exception as e:
+                self.log_message("error", f"Error searching jobs: {str(e)}")
+                return []
 
         except Exception as e:
-            logging.error(f"Error searching jobs: {str(e)}")
+            self.log_message("error", f"Error in initial request: {str(e)}")
             return []
 
     def get_job_details(self, job_url: str) -> Dict:
@@ -164,35 +243,59 @@ class WorkdayScraper(BaseScraper):
             Dictionary containing job details
         """
         job_details = {
-            'job_url': job_url
+            "job_url": job_url
         }
 
         try:
-            response = self.make_request(job_url)
-            soup = BeautifulSoup(response.text, 'html.parser')
+            # Set up headers for JSON response
+            headers = {
+                "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+                "accept-language": "en-US,en;q=0.9",
+                "cache-control": "no-cache",
+                "dnt": "1",
+                "pragma": "no-cache",
+                "sec-ch-ua": '"Microsoft Edge";v="135", "Not-A.Brand";v="8", "Chromium";v="135"',
+                "sec-ch-ua-mobile": "?0",
+                "sec-ch-ua-platform": '"Windows"',
+                "sec-fetch-dest": "document",
+                "sec-fetch-mode": "navigate",
+                "sec-fetch-site": "cross-site",
+                "sec-fetch-user": "?1",
+                "upgrade-insecure-requests": "1",
+                "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36 Edg/135.0.0.0"
+            }
 
-            # Extract job title
-            title_elem = soup.select_one('[data-automation-id="jobTitle"]')
-            if title_elem:
-                job_details['job_title'] = title_elem.text.strip()
+            # Fetch the job details
+            response = self.make_request(job_url, headers=headers)
 
-            # Extract job description
-            desc_elem = soup.select_one('[data-automation-id="jobDescription"]')
-            if desc_elem:
-                job_details['job_description'] = desc_elem.get_text(separator='\n').strip()
+            # Parse the JSON response
+            data = response.json()
 
-            # Extract location
-            location_elem = soup.select_one('[data-automation-id="jobLocation"]')
-            if location_elem:
-                job_details['location'] = location_elem.text.strip()
+            # Extract job posting info
+            job_posting = data.get("jobPostingInfo", {})
 
-            # Extract posted date
-            date_elem = soup.select_one('[data-automation-id="jobPostingDate"]')
-            if date_elem:
-                job_details['date_posted'] = date_elem.text.strip()
+            if job_posting:
+                # Extract key details
+                job_details["job_title"] = job_posting.get("title", "")
+                job_details["job_description"] = job_posting.get("jobDescription", "")
+                job_details["location"] = job_posting.get("location", "")
+                job_details["time_type"] = job_posting.get("timeType", "")
+                job_details["job_id"] = job_posting.get("jobReqId", "")
+                job_details["date_posted"] = job_posting.get("startDate", "")
+                job_details["valid_through"] = job_posting.get("endDate", "")
+
+                # Extract organization info
+                hiring_org = data.get("hiringOrganization", {})
+                if hiring_org:
+                    job_details["company_name"] = hiring_org.get("name", "")
+
+                # Save the raw data
+                job_details["raw_data"] = json.dumps(data)
+            else:
+                self.log_message("warning", f"No job posting info found in response for {job_url}")
 
             return job_details
 
         except Exception as e:
-            logging.error(f"Error getting job details: {str(e)}")
+            self.log_message("error", f"Error getting job details: {str(e)}")
             return job_details
