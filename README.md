@@ -43,6 +43,12 @@ Job Sources (Workday, Greenhouse, etc.)
 - **Data Processing**: Normalizes job data and performs content enrichment
 - **Data Storage**: Stores job and company data in BigQuery and Supabase
 
+### Dagster Pipeline Visualization
+
+The following diagram shows the structure of our Dagster pipeline assets, including URL discovery, job discovery, and data transport components:
+
+![Dagster Pipeline Structure](dagsterpipeline.png)
+
 ### Frontend Components
 - **Search**: Advanced job search with filters
 - **Company Browser**: View companies and their job listings
