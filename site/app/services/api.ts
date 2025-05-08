@@ -83,7 +83,10 @@ export async function getJobs(options: FetchJobsOptions = {}): Promise<Job[]> {
     }
 
     const offset = page * limit;
-    query = query.range(offset, offset + limit - 1);
+    query = query
+      .order('date_posted', { ascending: false, nullsFirst: false })
+      .order('date_retrieved', { ascending: false })
+      .range(offset, offset + limit - 1);
 
     const { data, error, count } = await query;
 
@@ -131,6 +134,7 @@ export async function getAllJobs(): Promise<Job[]> {
         updated_at
       `)
       .eq('is_active', true)
+      .order('date_posted', { ascending: false, nullsFirst: false })
       .order('date_retrieved', { ascending: false })
       .limit(2000);
 
