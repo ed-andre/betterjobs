@@ -39,7 +39,7 @@ Job Sources (Workday, Greenhouse, etc.)
 
 ### Pipeline Components
 - **URL Discovery**: Finds career site URLs for companies using various strategies
-- **Job Scraping**: Extracts job listings from company sites, varies by ATS platform
+- **Job discovery**: Extracts job listings from company sites, varies by ATS platform
 - **Data Processing**: Normalizes job data and performs content enrichment
 - **Data Storage**: Stores job and company data in BigQuery and Supabase
 
@@ -84,10 +84,8 @@ cat service-account.json | base64 -w 0 > credentials.b64
 
 #### 2. Supabase
 - Create a Supabase project
-- Set up the following tables in Supabase (schema defined in `pipeline/dagster_betterjobs/resources/supabase_schema.sql`)
-  - `companies`
-  - `jobs`
-  - `job_descriptions`
+- Set up the jobs table in supabase via the prisma migration in the frontend project under site/
+- Note: Supabase is only needed if using the frontend.
 - Get your Supabase URL and API keys
 
 #### 3. Gemini API
@@ -138,7 +136,7 @@ The `setup.py` file includes all necessary dependencies including:
 - Dagster and related packages
 - DuckDB and Postgres connectors
 - Google Cloud dependencies
-- Web scraping tools (BeautifulSoup, lxml)
+- Web discovery tools (BeautifulSoup, lxml)
 - Gemini AI integration
 
 3. Set up the frontend
@@ -183,7 +181,7 @@ The following Dagster jobs are available to run:
   - `smartrecruiters_jobs_discovery_job`: Find SmartRecruiters jobs
 
 - **End-to-End Jobs**:
-  - `full_jobs_discovery_and_search_job`: Run all URL discovery, job scraping, and data enrichment
+  - `full_jobs_discovery_and_search_job`: Run all URL discovery, job discovery, and data enrichment
 
 See the Dagster UI for the complete list of available jobs and their descriptions.
 
@@ -246,15 +244,15 @@ company_name,company_industry,platform,ats_url,career_url,url_verified
 Acme Corp,Technology,workday,https://acme.wd1.myworkdayjobs.com/acme_careers/,https://www.acme.com/careers,True
 ```
 
-3. The adhoc_company_urls_sensor will automatically detect changes to this file and trigger the relevant job scraping pipelines.
+3. The adhoc_company_urls_sensor will automatically detect changes to this file and trigger the relevant job discovery pipelines.
 
 ### Scheduling Jobs
 
-For production use, you should configure appropriate schedules:
+For automated use, you should configure appropriate schedules:
 
 1. The URL discovery assets (`*_company_urls`) only need to run when you update the datasource CSV files with new companies.
 
-2. The job scraping assets need to run frequently to find new job postings.
+2. The job discovery assets need to run frequently to find new job postings.
 
 To modify the built-in schedules or create new ones:
 
@@ -285,7 +283,7 @@ def jobs_every_four_hours_schedule():
 ### Best Practices for Resource Usage
 
 - URL discovery jobs should be run less frequently (monthly)
-- Job scraping jobs should be run more frequently (daily or multiple times daily)
+- Job discovery jobs should be run more frequently (daily or multiple times daily)
 - To conserve resources, focus on platforms with high job turnover
 - Some ATS platforms have rate limits - avoid running jobs too frequently
 
