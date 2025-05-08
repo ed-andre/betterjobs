@@ -7,6 +7,8 @@ setup(
         "dagster",
         "dagster-cloud",
         "dagster-duckdb",
+        "dagster-postgres",
+        "dagster-openai",
         "dagster-gcp",
         "dagster-gcp-pandas",
         "pandas",
@@ -20,6 +22,7 @@ setup(
         "python-dotenv>=1.0.0",
         "tqdm>=4.65.0",
         "tabulate>=0.9.0",  # For markdown tables
+        "beautifulsoup4>=4.12.0",
     ],
     extras_require={"dev": ["dagster-webserver", "pytest"]},
     entry_points={

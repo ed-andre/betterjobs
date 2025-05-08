@@ -1,32 +1,52 @@
-# Welcome to React Router!
+# BetterJobs - Frontend
 
-A modern, production-ready template for building full-stack React applications using React Router.
+This is the frontend component of the BetterJobs project. For complete project information and pipeline setup, please refer to the [main README](../README.md) in the root directory.
 
-[![Open in StackBlitz](https://developer.stackblitz.com/img/open_in_stackblitz.svg)](https://stackblitz.com/github/remix-run/react-router-templates/tree/main/default)
+BetterJobs is a personal project that aggregates job listings from various recruiting platforms into a single, searchable interface.
+
+## ⚠️ Disclaimer
+
+**This is a personal work in progress project.**
+
+- This project is not officially supported
+- Use at your own risk
+- No warranty or support is provided
+- The codebase may change significantly without notice
 
 ## Features
 
-- 🚀 Server-side rendering
-- ⚡️ Hot Module Replacement (HMR)
-- 📦 Asset bundling and optimization
-- 🔄 Data loading and mutations
-- 🔒 TypeScript by default
-- 🎉 TailwindCSS for styling
-- 📖 [React Router docs](https://reactrouter.com/)
+- 🔍 Search jobs across multiple recruiting platforms (Workday, BambooHR, Greenhouse, SmartRecruiters, etc.)
+- 📋 View detailed job descriptions in a clean, consistent format
+- 🏷️ Filter jobs by platform, company, or keywords
+- 🔄 Regular updates from job source APIs
+- 🚀 Built with React Router 7, TypeScript, and TailwindCSS
 
-## Getting Started
+## Local Setup
+
+### Prerequisites
+
+- Node.js (v18+)
+- npm or pnpm
+- Supabase account (for data storage)
+- Pipeline setup complete (see [main README](../README.md) for pipeline setup)
+
+### Environment Configuration
+
+Create a `.env` file in the `site` directory with the following variables:
+
+```
+SUPABASE_URL=your_supabase_url
+SUPABASE_ANON_KEY=your_supabase_anon_key
+```
 
 ### Installation
 
-Install the dependencies:
-
 ```bash
+cd site
 npm install
 ```
 
 ### Development
-
-Start the development server with HMR:
 
 ```bash
 npm run dev
@@ -36,52 +56,28 @@ Your application will be available at `http://localhost:5173`.
 
 ## Building for Production
 
-Create a production build:
-
 ```bash
 npm run build
 ```
 
-## Deployment
+## Technology Stack
 
-### Docker Deployment
+- **Frontend**: React, TypeScript, TailwindCSS, ShadcnUI
+- **Routing**: React Router 7
+- **Data Storage**: Supabase (PostgreSQL)
+- **Data Pipeline**: Dagster (see the [main README](../README.md) for pipeline details)
 
-To build and run using Docker:
+## Project Structure
 
-```bash
-docker build -t my-app .
+The frontend is part of a larger project that includes:
 
-# Run the container
-docker run -p 3000:3000 my-app
-```
+1. **Pipeline**: A Dagster data pipeline for retrieving, processing, and storing job data
+2. **Frontend**: This React application for searching and browsing job listings
 
-The containerized application can be deployed to any platform that supports Docker, including:
+## Contributing
 
-- AWS ECS
-- Google Cloud Run
-- Azure Container Apps
-- Digital Ocean App Platform
-- Fly.io
-- Railway
-
-### DIY Deployment
-
-If you're familiar with deploying Node applications, the built-in app server is production-ready.
-
-Make sure to deploy the output of `npm run build`
-
-```
-├── package.json
-├── package-lock.json (or pnpm-lock.yaml, or bun.lockb)
-├── build/
-│   ├── client/    # Static assets
-│   └── server/    # Server-side code
-```
-
-## Styling
-
-This template comes with [Tailwind CSS](https://tailwindcss.com/) already configured for a simple default starting experience. You can use whatever CSS framework you prefer.
+This is a personal project and not actively seeking contributions. However, feel free to fork the repository if you find it useful.
 
 ---
 
-Built with ❤️ using React Router.
+Built as a personal project for exploring job market data and modern web technologies.
