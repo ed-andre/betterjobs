@@ -160,3 +160,5 @@ job_sample
 /site/npm-debug.log*
 /site/yarn-debug.log*
 /site/yarn-error.log*
+
+.cursor/rules/custom-rule-react-router.mdc

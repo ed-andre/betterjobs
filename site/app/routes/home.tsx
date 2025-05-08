@@ -43,7 +43,7 @@ export default function Home() {
     setVisibleCount(prev => prev + 30);
   };
 
-  // Add scroll detection to load more jobs
+  // Load more jobs when user scrolls near the bottom
   useEffect(() => {
     const handleScroll = () => {
       if (window.innerHeight + window.scrollY >= document.body.offsetHeight - 500) {
@@ -60,12 +60,11 @@ export default function Home() {
     setVisibleCount(30);
   }, [searchQuery, platformFilter]);
 
-  // Log job information to help debug
+  // Log job information for debugging
   useEffect(() => {
     if (jobs && jobs.length > 0) {
       console.log("Total number of jobs loaded:", jobs.length);
 
-      // Count by platform
       const platformCounts: Record<string, number> = {};
       jobs.forEach(job => {
         const platform = job.platform || 'unknown';
@@ -74,7 +73,6 @@ export default function Home() {
 
       console.log("Jobs by platform:", platformCounts);
 
-      // Check for description presence
       const withDescription = jobs.filter(job => job.job_description && job.job_description.trim() !== "").length;
       console.log(`Jobs with descriptions: ${withDescription} / ${jobs.length}`);
     }
@@ -120,7 +118,7 @@ export default function Home() {
     });
   }, [jobs, searchQuery, platformFilter]);
 
-  // Get only the visible slice of jobs
+  // Get visible slice of jobs
   const visibleJobs = useMemo(() => {
     return filteredJobs.slice(0, visibleCount);
   }, [filteredJobs, visibleCount]);

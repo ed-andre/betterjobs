@@ -46,10 +46,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
                 <Link to="/" className="text-gray-700 hover:text-blue-600 px-3 py-2 text-sm font-medium">
                   Home
                 </Link>
-                <Link to="/jobs" className="text-gray-700 hover:text-blue-600 px-3 py-2 text-sm font-medium">
+                {/* <Link to="/jobs" className="text-gray-700 hover:text-blue-600 px-3 py-2 text-sm font-medium">
                   All Jobs
-                </Link>
-                {/* Add more navigation links as needed */}
+                </Link> */}
+                
               </nav>
             </div>
           </div>
