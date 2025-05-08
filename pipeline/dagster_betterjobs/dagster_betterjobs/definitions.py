@@ -17,6 +17,7 @@ from google.cloud import bigquery
 from google.oauth2.service_account import Credentials
 
 from dagster_betterjobs import assets  # noqa: TID252
+from dagster_betterjobs.sensors import adhoc_company_urls_sensor
 
 from dagster_betterjobs.assets.bamboohr_jobs_discovery import (
     bamboohr_company_jobs_discovery
@@ -32,7 +33,7 @@ from dagster_betterjobs.assets.workday_jobs_discovery import (
 )
 from dagster_betterjobs.io import BetterJobsIOManager
 from dagster_betterjobs.jobs import (
-   
+
     workday_url_discovery_job,
     greenhouse_url_discovery_job,
     bamboohr_url_discovery_job,
@@ -146,5 +147,8 @@ defs = Definitions(
     schedules=[
         bamboohr_jobs_hourly_schedule,
         full_jobs_discovery_and_search_schedule,
+    ],
+    sensors=[
+        adhoc_company_urls_sensor,
     ],
 )

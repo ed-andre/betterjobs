@@ -16,6 +16,7 @@ from dagster_betterjobs.assets.greenhouse_jobs_discovery import alpha_partitions
 from dagster_betterjobs.assets.workday_jobs_discovery import alpha_partitions as workday_partitions_def
 from dagster_betterjobs.assets.smartrecruiters_jobs_discovery import alpha_partitions as smartrecruiters_partitions_def
 from dagster_betterjobs.assets.icims_jobs_discovery import alpha_partitions as icims_partitions_def
+import os
 
 # Use bamboo_partitions_def for alpha_partitions
 alpha_partitions = bamboo_partitions_def
@@ -253,7 +254,7 @@ data_engineering_job = define_asset_job(
                     "min_match_score": 0.1,
                     "platforms": ["greenhouse", "bamboohr", "smartrecruiters", "workday"],
                     "output_format": "html",
-                    "output_file": "output/data_engineering_jobs_{date}.html",
+                    "output_file": os.path.join(os.getenv("JOB_SEARCH_OUTPUT_FOLDER", "output"), "data_engineering_jobs_{date}.html"),
                     "include_descriptions": True
                 }
             }
@@ -282,7 +283,7 @@ def full_jobs_discovery_and_search_partitioned_config(partition_key: str):
                     "min_match_score": 0.1,
                     "platforms": ["greenhouse", "workday", "bamboohr", "smartrecruiters"],
                     "output_format": "html",
-                    "output_file": "output/data_engineering_jobs_{date}.html",
+                    "output_file": os.path.join(os.getenv("JOB_SEARCH_OUTPUT_FOLDER", "output"), "data_engineering_jobs_{date}.html"),
                     "include_descriptions": True
                 }
             }
