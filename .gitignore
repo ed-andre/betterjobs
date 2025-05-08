@@ -125,3 +125,38 @@ encode_credentials.py
 jobs
 output
 job_sample
+
+
+# React/Remix/Vite specific
+/site/node_modules
+/site/.react-router
+/site/build
+/site/dist
+/site/.cache
+/site/public/build
+
+# Prisma specific
+/site/generated
+/site/prisma/.env
+/site/prisma/migrations/dev
+/site/prisma/migrations/*_init
+/site/prisma/migrations/*/migration.sql
+
+# Supabase local development
+/site/.supabase
+
+# Build artifacts
+/site/*.local
+/site/.vite
+
+# Environment
+/site/.env*
+/site/.env.local
+/site/.env.development.local
+/site/.env.test.local
+/site/.env.production.local
+
+# Debug logs
+/site/npm-debug.log*
+/site/yarn-debug.log*
+/site/yarn-error.log*

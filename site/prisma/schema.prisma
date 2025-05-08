@@ -24,3 +24,25 @@ model User {
   name  String?
   posts Post[]
 }
+
+model Job {
+  id             Int      @id @default(autoincrement())
+  job_id         String
+  company_id     String
+  company_name   String?
+  platform       String
+  job_title      String
+  job_description String?
+  job_url        String
+  location       String?
+  department     String?
+  date_posted    DateTime?
+  date_retrieved DateTime?
+  is_active      Boolean  @default(true)
+  created_at     DateTime @default(now())
+  updated_at     DateTime @updatedAt
+
+  @@unique([job_id, company_id])
+  @@index([job_url])
+}
+

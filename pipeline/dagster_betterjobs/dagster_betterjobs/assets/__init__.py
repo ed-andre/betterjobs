@@ -17,6 +17,8 @@ from dagster_betterjobs.assets.workday_jobs_discovery import workday_company_job
 from dagster_betterjobs.assets.icims_jobs_discovery import icims_company_jobs_discovery
 from dagster_betterjobs.assets.job_search import search_jobs
 
+from dagster_betterjobs.assets.supabase_transport import bamboohr_jobs_to_supabase, greenhouse_jobs_to_supabase
+
 __all__ = [
     "retry_failed_company_urls",
     "workday_company_urls",
@@ -43,5 +45,7 @@ __all__ = [
     "smartrecruiters_company_jobs_discovery",
     "workday_company_jobs_discovery",
     "icims_company_jobs_discovery",
-    "search_jobs"
+    "search_jobs",
+    "bamboohr_jobs_to_supabase",
+    "greenhouse_jobs_to_supabase"
 ]

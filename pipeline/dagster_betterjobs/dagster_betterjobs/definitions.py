@@ -8,6 +8,7 @@ from dagster_duckdb import DuckDBResource
 from dagster_gcp_pandas import BigQueryPandasIOManager
 from dagster_gcp import BigQueryResource
 from dagster_gemini import GeminiResource
+
 from dagster_openai import OpenAIResource
 from pathlib import Path
 import os
@@ -55,6 +56,9 @@ from dagster_betterjobs.schedules import (
     bamboohr_jobs_hourly_schedule,
     full_jobs_discovery_and_search_schedule
 )
+
+# Import the custom PostgresResource
+from dagster_betterjobs.resources import PostgresResource
 
 
 @resource
@@ -113,6 +117,14 @@ resources = {
         timeout=15.0,
         gcp_credentials=EnvVar("GCP_CREDENTIALS")
     ),
+    "supabase_postgres": PostgresResource(
+        host=EnvVar("SUPABASE_HOST"),
+        port=6543,
+        user=EnvVar("SUPABASE_USER"),
+        password=EnvVar("SUPABASE_PASSWORD"),
+        dbname=EnvVar("SUPABASE_DB"),
+        sslmode="require"
+    ),
 }
 
 # Verify presence of required environment variables
@@ -120,6 +132,9 @@ print("GCP_CREDENTIALS present:", bool(os.getenv("GCP_CREDENTIALS")))
 print("GCP_PROJECT_ID present:", bool(os.getenv("GCP_PROJECT_ID")))
 print("GCP_DATASET_ID present:", bool(os.getenv("GCP_DATASET_ID")))
 print("GCP_LOCATION present:", bool(os.getenv("GCP_LOCATION")))
+print("SUPABASE_HOST present:", bool(os.getenv("SUPABASE_HOST")))
+print("SUPABASE_USER present:", bool(os.getenv("SUPABASE_USER")))
+print("SUPABASE_PASSWORD present:", bool(os.getenv("SUPABASE_PASSWORD")))
 
 # Define Dagster application
 defs = Definitions(
