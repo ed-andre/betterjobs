@@ -44,7 +44,7 @@ class JobSearchConfig(Config):
     group_name="job_search",
     kinds={"bigquery", "python"},
     required_resource_keys={"bigquery"},
-    deps=["greenhouse_company_jobs_discovery", "bamboohr_company_jobs_discovery", "smartrecruiters_company_jobs_discovery"]
+    deps=["greenhouse_company_jobs_discovery", "bamboohr_company_jobs_discovery", "smartrecruiters_company_jobs_discovery", "workday_company_jobs_discovery"]
 )
 def search_jobs(context: AssetExecutionContext, config: JobSearchConfig) -> pd.DataFrame:
     """

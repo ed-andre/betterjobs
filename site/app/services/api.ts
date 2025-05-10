@@ -1,6 +1,8 @@
 import { createClient } from '@supabase/supabase-js';
 
-
+/**
+ * Job data structure from Supabase
+ */
 export interface Job {
   id: number;
   job_id: string;
@@ -19,33 +21,28 @@ export interface Job {
   updated_at: string;
 }
 
+// Supabase connection configuration
 const SUPABASE_URL = process.env.SUPABASE_URL || "";
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || "";
 
-if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-  if (typeof window === 'undefined') {
-    console.warn("Supabase URL or Anon Key is not set. API calls will fail.");
-    // throw new Error("SupABASE_URL and SUPABASE_ANON_KEY must be set in environment variables on the server.");
-  } else {
-    console.warn("Supabase URL or Anon Key is not set. Ensure they are configured in your environment.");
-  }
-}
-
+// Initialize Supabase client
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+/**
+ * Options for fetching job listings
+ */
 interface FetchJobsOptions {
   limit?: number;
   page?: number;
   platform?: string;
 }
 
+/**
+ * Fetches paginated job listings from Supabase with optional filtering
+ */
 export async function getJobs(options: FetchJobsOptions = {}): Promise<Job[]> {
-  console.log("Attempting to fetch jobs from Supabase...");
-  console.log("Supabase URL:", SUPABASE_URL ? "Set" : "Not Set");
-  console.log("Supabase Anon Key:", SUPABASE_ANON_KEY ? "Set" : "Not Set");
-
   if (!supabase || !SUPABASE_URL || !SUPABASE_ANON_KEY) {
-    console.error("Supabase client not initialized. Returning empty array.");
+    console.error("Supabase client not initialized. Check environment configuration.");
     return [];
   }
 
@@ -53,6 +50,7 @@ export async function getJobs(options: FetchJobsOptions = {}): Promise<Job[]> {
   const limit = options.limit || 2000;
   const page = options.page || 0;
   const platform = options.platform;
+  const offset = page * limit;
 
   try {
     console.log(`Fetching jobs (page ${page}, limit ${limit})${platform ? ` for platform ${platform}` : ''}...`);
@@ -82,38 +80,38 @@ export async function getJobs(options: FetchJobsOptions = {}): Promise<Job[]> {
       query = query.eq('platform', platform);
     }
 
-    const offset = page * limit;
     query = query
       .order('date_posted', { ascending: false, nullsFirst: false })
       .order('date_retrieved', { ascending: false })
       .range(offset, offset + limit - 1);
 
-    const { data, error, count } = await query;
+    const { data, error } = await query;
 
     if (error) {
       console.error('Error fetching jobs from Supabase:', error);
       throw error;
     }
 
-    console.log(`Successfully fetched ${data?.length || 0} jobs (offset ${offset})`);
+    console.log(`Successfully fetched ${data?.length || 0} jobs`);
 
-    const processedData = (data || []).map(job => ({
-      ...job,
-      job_description: job.job_description && job.job_description.trim() !== "" ? job.job_description : null
-    }));
-
-    return processedData;
+    return processJobData(data);
   } catch (error) {
-    console.error('An unexpected error occurred while fetching jobs:', error);
+    console.error('Error while fetching jobs:', error);
     return [];
   }
 }
 
+/**
+ * Fetches all active job listings from Supabase, sorted by newest first
+ */
 export async function getAllJobs(): Promise<Job[]> {
-  console.log("getAllJobs called");
+  if (!supabase || !SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    console.error("Supabase client not initialized. Check environment configuration.");
+    return [];
+  }
 
   try {
-    console.log("Fetching all jobs with direct query");
+    console.log("Fetching all active jobs...");
     const { data, error } = await supabase
       .from('Job')
       .select(`
@@ -145,15 +143,20 @@ export async function getAllJobs(): Promise<Job[]> {
 
     console.log(`Total jobs fetched: ${data?.length || 0}`);
 
-    const processedData = (data || []).map(job => ({
-      ...job,
-      job_description: job.job_description && job.job_description.trim() !== "" ? job.job_description : null
-    }));
-
-    return processedData;
+    return processJobData(data);
   } catch (error) {
     console.error("Error in getAllJobs:", error);
     throw error;
   }
+}
+
+/**
+ * Process and sanitize job data from Supabase
+ */
+function processJobData(data: Job[] | null): Job[] {
+  return (data || []).map(job => ({
+    ...job,
+    job_description: job.job_description && job.job_description.trim() !== "" ? job.job_description : null
+  }));
 }
 

@@ -53,7 +53,7 @@ from dagster_betterjobs.jobs import (
     full_jobs_discovery_and_search_job
 )
 from dagster_betterjobs.schedules import (
-    bamboohr_jobs_hourly_schedule,
+    # bamboohr_jobs_hourly_schedule,
     full_jobs_discovery_and_search_schedule
 )
 
@@ -160,7 +160,7 @@ defs = Definitions(
         full_jobs_discovery_and_search_job,
     ],
     schedules=[
-        bamboohr_jobs_hourly_schedule,
+        # bamboohr_jobs_hourly_schedule,
         full_jobs_discovery_and_search_schedule,
     ],
     sensors=[

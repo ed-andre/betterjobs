@@ -31,25 +31,25 @@ from datetime import datetime
 #         }
 #     }
 
-# Schedule for BambooHR jobs running at different times throughout the day
-@schedule(
-    cron_schedule="0 */2 * * *",  # Run every 2 hours
-    execution_timezone="US/Eastern",
-    job=bamboohr_jobs_discovery_job,
-)
-def bamboohr_jobs_hourly_schedule(context):
-    """BambooHR job discovery that runs all alphabetical partitions every 2 hours."""
-    # Get all partition keys from alpha_partitions
-    for partition_key in alpha_partitions.get_partition_keys():
-        # Create a unique run key for each partition
-        run_key = f"bamboohr_jobs_{partition_key}_{context.scheduled_execution_time.strftime('%Y-%m-%d_%H')}"
+# # Schedule for BambooHR jobs running at different times throughout the day
+# @schedule(
+#     cron_schedule="0 */2 * * *",  # Run every 2 hours
+#     execution_timezone="US/Eastern",
+#     job=bamboohr_jobs_discovery_job,
+# )
+# def bamboohr_jobs_hourly_schedule(context):
+#     """BambooHR job discovery that runs all alphabetical partitions every 2 hours."""
+#     # Get all partition keys from alpha_partitions
+#     for partition_key in alpha_partitions.get_partition_keys():
+#         # Create a unique run key for each partition
+#         run_key = f"bamboohr_jobs_{partition_key}_{context.scheduled_execution_time.strftime('%Y-%m-%d_%H')}"
 
-        # Yield a RunRequest for each partition
-        yield RunRequest(
-            run_key=run_key,
-            partition_key=partition_key,
-            tags={"partition": partition_key}
-        )
+#         # Yield a RunRequest for each partition
+#         yield RunRequest(
+#             run_key=run_key,
+#             partition_key=partition_key,
+#             tags={"partition": partition_key}
+#         )
 
 # Schedule for running all job discovery assets (except iCIMS) plus job search
 @schedule(
