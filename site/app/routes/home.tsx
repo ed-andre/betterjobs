@@ -36,6 +36,7 @@ export default function Home() {
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [platformFilter, setPlatformFilter] = useState<string>("all");
+  const [locationFilter, setLocationFilter] = useState<string>("");
   const [visibleCount, setVisibleCount] = useState(30); // Initially show 30 jobs
 
   // Load more jobs when user scrolls near the bottom
@@ -58,7 +59,7 @@ export default function Home() {
   // Reset visible count when filters change
   useEffect(() => {
     setVisibleCount(30);
-  }, [searchQuery, platformFilter]);
+  }, [searchQuery, platformFilter, locationFilter]);
 
   // Log job information for debugging
   useEffect(() => {
@@ -93,6 +94,20 @@ export default function Home() {
     return ["all", ...Array.from(platformSet)];
   }, [jobs]);
 
+  // Get unique locations for filter dropdown
+  const locations = useMemo(() => {
+    if (!jobs || jobs.length === 0) return ["all"];
+
+    const locationSet = new Set<string>();
+    jobs.forEach(job => {
+      if (job.location) {
+        locationSet.add(job.location);
+      }
+    });
+
+    return ["all", ...Array.from(locationSet).sort()];
+  }, [jobs]);
+
   // Filter jobs based on search query and platform filter
   const filteredJobs = useMemo(() => {
     if (!jobs) return [];
@@ -101,6 +116,13 @@ export default function Home() {
       // Apply platform filter
       if (platformFilter !== "all" && job.platform !== platformFilter) {
         return false;
+      }
+
+      // Apply location filter - updated to use includes for partial matching
+      if (locationFilter && job.location) {
+        if (!job.location.toLowerCase().includes(locationFilter.toLowerCase())) {
+          return false;
+        }
       }
 
       // Apply search query filter (case insensitive)
@@ -116,7 +138,7 @@ export default function Home() {
 
       return true;
     });
-  }, [jobs, searchQuery, platformFilter]);
+  }, [jobs, searchQuery, platformFilter, locationFilter]);
 
   // Get visible slice of jobs
   const visibleJobs = useMemo(() => {
@@ -157,6 +179,16 @@ export default function Home() {
               ))}
             </select>
           </div>
+          <div className="w-full md:w-48">
+            <Input
+              type="text"
+              placeholder="Filter by location..."
+              value={locationFilter}
+              onChange={(e) => setLocationFilter(e.target.value)}
+              className="w-full"
+              disabled={isLoading}
+            />
+          </div>
         </div>
       </div>
 
@@ -174,6 +206,7 @@ export default function Home() {
           <div className="mb-4 text-sm text-gray-500">
             Showing {Math.min(visibleCount, filteredJobs.length)} of {filteredJobs.length} {filteredJobs.length === 1 ? 'job' : 'jobs'}
             {platformFilter !== "all" && ` from ${platformFilter}`}
+            {locationFilter && ` in locations matching "${locationFilter}"`}
             {searchQuery && ` matching "${searchQuery}"`}
           </div>
 
