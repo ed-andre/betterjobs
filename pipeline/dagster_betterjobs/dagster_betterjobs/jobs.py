@@ -191,6 +191,23 @@ workday_jobs_discovery_job = define_asset_job(
     config=workday_partitioned_config
 )
 
+icims_jobs_discovery_job = define_asset_job(
+    name="icims_jobs_discovery_job",
+    selection=AssetSelection.assets("icims_company_jobs_discovery"),
+    description="Job that discovers and collects job listings from ICIMS career sites",
+    partitions_def=icims_partitions_def,
+    config=icims_partitioned_config
+)
+
+# For Supabase transport assets
+supabase_transport_job = define_asset_job(
+    name ="supabase_transport_job",
+    selection=AssetSelection.assets("bamboohr_jobs_to_supabase", "greenhouse_jobs_to_supabase", "workday_jobs_to_supabase", "smartrecruiters_jobs_to_supabase"),
+    description="Job that transports job info from bigquery data to Supabase"
+)
+
+
+
 # Define a job for all job discovery across platforms
 @static_partitioned_config(partition_keys=alpha_partitions.get_partition_keys())
 def full_jobs_partitioned_config(partition_key: str):
@@ -204,6 +221,15 @@ def full_jobs_partitioned_config(partition_key: str):
         }
     }
 
+full_jobs_discovery_job = define_asset_job(
+    name="full_jobs_discovery_job",
+    selection=AssetSelection.groups("job_discovery"),
+    description="Job that discovers and collects job listings from all supported platforms",
+    partitions_def=alpha_partitions,
+    config=full_jobs_partitioned_config
+)
+
+# For all job discovery except ICIMS
 @static_partitioned_config(partition_keys=alpha_partitions.get_partition_keys())
 def full_jobs_except_icims_partitioned_config(partition_key: str):
     return {
@@ -214,14 +240,6 @@ def full_jobs_except_icims_partitioned_config(partition_key: str):
             "smartrecruiters_company_jobs_discovery": {"config": {}}
         }
     }
-
-full_jobs_discovery_job = define_asset_job(
-    name="full_jobs_discovery_job",
-    selection=AssetSelection.groups("job_discovery"),
-    description="Job that discovers and collects job listings from all supported platforms",
-    partitions_def=alpha_partitions,
-    config=full_jobs_partitioned_config
-)
 
 full_jobs_discovery_except_icims_job = define_asset_job(
     name="full_jobs_discovery_except_icims_job",
@@ -304,11 +322,34 @@ full_jobs_discovery_and_search_job = define_asset_job(
     config=full_jobs_discovery_and_search_partitioned_config
 )
 
-icims_jobs_discovery_job = define_asset_job(
-    name="icims_jobs_discovery_job",
-    selection=AssetSelection.assets("icims_company_jobs_discovery"),
-    description="Job that discovers and collects job listings from ICIMS career sites",
-    partitions_def=icims_partitions_def,
-    config=icims_partitioned_config
+# Define a job that combines job discovery and Supabase transport
+@static_partitioned_config(partition_keys=alpha_partitions.get_partition_keys())
+def discovery_and_transport_partitioned_config(partition_key: str):
+    return {
+        "ops": {
+            "bamboohr_company_jobs_discovery": {"config": {}},
+            "greenhouse_company_jobs_discovery": {"config": {}},
+            "workday_company_jobs_discovery": {"config": {}},
+            "smartrecruiters_company_jobs_discovery": {"config": {}}
+        }
+    }
+
+discovery_and_transport_job = define_asset_job(
+    name="discovery_and_transport_job",
+    selection=AssetSelection.assets(
+        "greenhouse_company_jobs_discovery",
+        "workday_company_jobs_discovery",
+        "smartrecruiters_company_jobs_discovery",
+        "bamboohr_company_jobs_discovery",
+        "bamboohr_jobs_to_supabase",
+        "greenhouse_jobs_to_supabase",
+        "workday_jobs_to_supabase",
+        "smartrecruiters_jobs_to_supabase"
+    ),
+    description="Job that discovers jobs (except iCIMS) and transports them to Supabase",
+    partitions_def=alpha_partitions,
+    config=discovery_and_transport_partitioned_config
 )
+
+
 

@@ -50,11 +50,14 @@ from dagster_betterjobs.jobs import (
     greenhouse_jobs_discovery_job,
     smartrecruiters_jobs_discovery_job,
     workday_jobs_discovery_job,
-    full_jobs_discovery_and_search_job
+    full_jobs_discovery_and_search_job,
+    supabase_transport_job
+
 )
 from dagster_betterjobs.schedules import (
     # bamboohr_jobs_hourly_schedule,
-    full_jobs_discovery_and_search_schedule
+    full_jobs_discovery_and_search_schedule,
+    full_jobs_discovery_and_supabase_schedule
 )
 
 # Import the custom PostgresResource
@@ -158,10 +161,13 @@ defs = Definitions(
         full_jobs_discovery_job,
         data_engineering_job,
         full_jobs_discovery_and_search_job,
+        supabase_transport_job
+
     ],
     schedules=[
         # bamboohr_jobs_hourly_schedule,
         full_jobs_discovery_and_search_schedule,
+        full_jobs_discovery_and_supabase_schedule,
     ],
     sensors=[
         adhoc_company_urls_sensor,
