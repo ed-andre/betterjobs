@@ -33,7 +33,7 @@ class BambooHRJobsDiscoveryConfig(Config):
     days_to_look_back: int = 14  # Job freshness threshold in days
     batch_size: int = 10  # Companies per batch before committing
     skip_detailed_fetch: bool = False  # Skip detailed job info for faster processing
-    skip_processed_companies: bool = False  # Process all companies by default, even if already in checkpoint
+    process_all_companies: bool = True  # By default, process all companies regardless of checkpoint status
 
 @asset(
     group_name="job_discovery",
@@ -131,26 +131,20 @@ def bamboohr_company_jobs_discovery(context: AssetExecutionContext, config: Bamb
 
     # Resume from checkpoint if exists
     processed_company_ids = set()
-    if checkpoint_file.exists():
+    checkpoint_results = []
+    failed_companies = []
+
+    if checkpoint_file.exists() and not config.process_all_companies:
         try:
             checkpoint_df = pd.read_csv(checkpoint_file)
             processed_company_ids = set(checkpoint_df["company_id"].astype(str).tolist())
+            checkpoint_results = checkpoint_df.to_dict("records")
             context.log.info(f"Loaded {len(processed_company_ids)} previously processed companies from checkpoint")
-
-            # Update stats from checkpoint
-            stats["companies_processed"] = len(processed_company_ids)
-            if "jobs_found" in checkpoint_df.columns:
-                stats["total_jobs_found"] = checkpoint_df["jobs_found"].sum()
-            if "jobs_added" in checkpoint_df.columns:
-                stats["new_jobs_added"] = checkpoint_df["jobs_added"].sum()
-            if "jobs_updated" in checkpoint_df.columns:
-                stats["updated_jobs"] = checkpoint_df["jobs_updated"].sum()
-
         except Exception as e:
             context.log.error(f"Error loading checkpoint file: {str(e)}")
 
     # Skip already processed companies if configured to do so
-    if config.skip_processed_companies and checkpoint_file.exists():
+    if not config.process_all_companies and checkpoint_file.exists():
         companies_to_process = companies_df[~companies_df["company_id"].astype(str).isin(processed_company_ids)]
         context.log.info(f"{len(companies_to_process)} BambooHR companies remaining to process after skipping processed ones")
     else:
@@ -159,7 +153,6 @@ def bamboohr_company_jobs_discovery(context: AssetExecutionContext, config: Bamb
         context.log.info(f"Processing all {len(companies_to_process)} BambooHR companies in this partition")
 
     # Load previously failed companies
-    failed_companies = []
     if failed_companies_file.exists():
         try:
             failed_df = pd.read_csv(failed_companies_file)
@@ -183,7 +176,9 @@ def bamboohr_company_jobs_discovery(context: AssetExecutionContext, config: Bamb
         date_retrieved TIMESTAMP,
         is_active BOOL,
         raw_data STRING,
-        partition_key STRING
+        partition_key STRING,
+        compensation STRING,
+        work_type STRING
     )
     """
 
@@ -198,14 +193,6 @@ def bamboohr_company_jobs_discovery(context: AssetExecutionContext, config: Bamb
     # Process companies in batches
     batch_size = config.batch_size
     new_failed_companies = []
-    checkpoint_results = []
-
-    # Load previous checkpoint results if exists
-    if checkpoint_file.exists():
-        try:
-            checkpoint_results = pd.read_csv(checkpoint_file).to_dict("records")
-        except Exception:
-            checkpoint_results = []
 
     # Process companies in batches
     for i in range(0, len(companies_to_process), batch_size):
@@ -327,6 +314,12 @@ def bamboohr_company_jobs_discovery(context: AssetExecutionContext, config: Bamb
                     department = job_details.get("department", "")
                     employment_status = job_details.get("employment_status", "")
 
+                    # Extract work_type info if available
+                    work_type = job_details.get("work_type", "")
+
+                    # Extract compensation info if available
+                    compensation = job_details.get("compensation", "")
+
                     # Handle location data
                     location_str = None
                     if job_details.get("location_string"):
@@ -360,7 +353,9 @@ def bamboohr_company_jobs_discovery(context: AssetExecutionContext, config: Bamb
                         "date_retrieved": datetime.now().isoformat(),
                         "is_active": True,
                         "raw_data": raw_data,
-                        "partition_key": partition_key
+                        "partition_key": partition_key,
+                        "compensation": compensation,
+                        "work_type": work_type
                     }
 
                     if existing_job:
@@ -430,7 +425,9 @@ def bamboohr_company_jobs_discovery(context: AssetExecutionContext, config: Bamb
                     date_retrieved TIMESTAMP,
                     is_active BOOL,
                     raw_data STRING,
-                    partition_key STRING
+                    partition_key STRING,
+                    compensation STRING,
+                    work_type STRING
                 )
                 """
                 query_job = client.query(create_temp_sql)
@@ -466,7 +463,9 @@ def bamboohr_company_jobs_discovery(context: AssetExecutionContext, config: Bamb
                         bigquery.SchemaField("date_retrieved", "TIMESTAMP"),
                         bigquery.SchemaField("is_active", "BOOL"),
                         bigquery.SchemaField("raw_data", "STRING"),
-                        bigquery.SchemaField("partition_key", "STRING")
+                        bigquery.SchemaField("partition_key", "STRING"),
+                        bigquery.SchemaField("compensation", "STRING"),
+                        bigquery.SchemaField("work_type", "STRING")
                     ]
                 )
 
@@ -483,12 +482,14 @@ def bamboohr_company_jobs_discovery(context: AssetExecutionContext, config: Bamb
                 INSERT INTO {dataset_name}.bamboohr_jobs (
                     job_id, company_id, job_title, job_description, job_url,
                     location, department, employment_status, date_posted,
-                    date_retrieved, is_active, raw_data, partition_key
+                    date_retrieved, is_active, raw_data, partition_key,
+                    compensation, work_type
                 )
                 SELECT
                     t.job_id, t.company_id, t.job_title, t.job_description, t.job_url,
                     t.location, t.department, t.employment_status, t.date_posted,
-                    t.date_retrieved, t.is_active, t.raw_data, t.partition_key
+                    t.date_retrieved, t.is_active, t.raw_data, t.partition_key,
+                    t.compensation, t.work_type
                 FROM {temp_table_name} t
                 LEFT JOIN {dataset_name}.bamboohr_jobs j
                     ON t.job_url = j.job_url
@@ -511,7 +512,9 @@ def bamboohr_company_jobs_discovery(context: AssetExecutionContext, config: Bamb
                     j.date_retrieved = t.date_retrieved,
                     j.is_active = t.is_active,
                     j.raw_data = t.raw_data,
-                    j.partition_key = t.partition_key
+                    j.partition_key = t.partition_key,
+                    j.compensation = t.compensation,
+                    j.work_type = t.work_type
                 FROM {temp_table_name} t
                 WHERE j.job_url = t.job_url
                 """

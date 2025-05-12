@@ -196,6 +196,9 @@ class WorkdayScraper(BaseScraper):
                     posted_on = job.get("postedOn", "")
                     bullet_fields = job.get("bulletFields", [])
 
+                    # Extract remote work type if available
+                    work_type = job.get("remoteType", "")
+
                     # Extract job ID from bullet fields (usually the first one) or from externalPath
                     job_id = None
                     if bullet_fields and len(bullet_fields) > 0:
@@ -218,6 +221,7 @@ class WorkdayScraper(BaseScraper):
                             "location": locations_text,
                             "time_type": time_type,
                             "posted_on": posted_on,
+                            "work_type": work_type,
                             "raw_data": json.dumps(job)
                         }
                         jobs.append(job_record)
@@ -284,7 +288,12 @@ class WorkdayScraper(BaseScraper):
                 job_details["date_posted"] = job_posting.get("startDate", "")
                 job_details["valid_through"] = job_posting.get("endDate", "")
 
-                # Extract organization info
+                # Extract remote work type (Hybrid, On-Site, Remote)
+                job_details["work_type"] = job_posting.get("remoteType", "")
+                if job_details["work_type"]:
+                    self.log_message("info", f"Found work type: {job_details['work_type']}")
+
+                # Hiring organization info
                 hiring_org = data.get("hiringOrganization", {})
                 if hiring_org:
                     job_details["company_name"] = hiring_org.get("name", "")

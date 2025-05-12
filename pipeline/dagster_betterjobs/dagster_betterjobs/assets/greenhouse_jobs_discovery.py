@@ -33,8 +33,8 @@ class GreenhouseJobsDiscoveryConfig(Config):
     max_company_id: Optional[int] = None  # For batch processing
     days_to_look_back: int = 14  # Job freshness threshold in days
     batch_size: int = 10  # Companies per batch before committing
-    skip_detailed_fetch: bool = True  # Skip detailed job info as all data is in initial response
-    skip_processed_companies: bool = False  # Process all companies by default, even if already in checkpoint
+    skip_detailed_fetch: bool = False  # Skip detailed job fetching if needed
+    process_all_companies: bool = True  # By default, process all companies regardless of checkpoint status
 
 @asset(
     group_name="job_discovery",
@@ -134,7 +134,7 @@ def greenhouse_company_jobs_discovery(context: AssetExecutionContext, config: Gr
 
     # Resume from checkpoint if exists
     processed_company_ids = set()
-    if checkpoint_file.exists():
+    if checkpoint_file.exists() and not config.process_all_companies:
         try:
             checkpoint_df = pd.read_csv(checkpoint_file)
             processed_company_ids = set(checkpoint_df["company_id"].astype(str).tolist())
@@ -153,7 +153,7 @@ def greenhouse_company_jobs_discovery(context: AssetExecutionContext, config: Gr
             context.log.error(f"Error loading checkpoint file: {str(e)}")
 
     # Skip already processed companies if configured to do so
-    if config.skip_processed_companies and checkpoint_file.exists():
+    if not config.process_all_companies and checkpoint_file.exists():
         companies_to_process = companies_df[~companies_df["company_id"].astype(str).isin(processed_company_ids)]
         context.log.info(f"{len(companies_to_process)} Greenhouse companies remaining to process after skipping processed ones")
     else:
@@ -188,7 +188,9 @@ def greenhouse_company_jobs_discovery(context: AssetExecutionContext, config: Gr
         date_retrieved TIMESTAMP,
         is_active BOOL,
         raw_data STRING,
-        partition_key STRING
+        partition_key STRING,
+        work_type STRING,
+        compensation STRING
     )
     """
 
@@ -324,29 +326,58 @@ def greenhouse_company_jobs_discovery(context: AssetExecutionContext, config: Gr
                         context.log.error(f"Error checking if job exists: {str(e)}")
                         existing_job = []
 
-                    # Prepare job data
-                    job_title = job_details.get("job_title", "")
-                    job_description = job_details.get("job_description", "")
-
-                    # Extract content (job description) if available
-                    if "content" in job_details and not job_description:
-                        job_description = job_details.get("content", "")
+                    # Extract job details
+                    job_id = job_details.get("id")
+                    job_title = job_details.get("job_title")
+                    location = job_details.get("location")
+                    job_url = job_details.get("job_url")
+                    published_at = job_details.get("published_at")
+                    updated_at = job_details.get("updated_at")
+                    requisition_id = job_details.get("requisition_id")
 
                     # Handle department data
                     department = None
                     department_id = None
                     if job_details.get("department"):
                         dept_data = job_details["department"]
-                        department = dept_data.get("name")
-                        department_id = dept_data.get("id")
+                        if isinstance(dept_data, dict):
+                            department = dept_data.get("name")
+                            department_id = dept_data.get("id")
+                        elif isinstance(dept_data, str):
+                            department = dept_data
 
-                    # Get location string
-                    location_str = job_details.get("location")
+                    # Get location string - ensure it's a string
+                    location_str = job_details.get("location", "")
+
+                    if isinstance(location_str, dict) and "name" in location_str:
+                        location_str = location_str.get("name", "")
+                    elif not isinstance(location_str, str):
+                        location_str = str(location_str) if location_str is not None else ""
+
+                    # Ensure job_title is a string
+                    if not isinstance(job_title, str):
+                        job_title = str(job_title) if job_title is not None else ""
+
+                    # Ensure job_description is a string
+                    if not isinstance(job_details.get("job_description", ""), str):
+                        job_description = str(job_details.get("job_description", "")) if job_details.get("job_description", "") is not None else ""
+                    elif not job_details.get("job_description", "") and "content" in job_details:
+                        job_description = job_details.get("content", "")
+                        if not isinstance(job_description, str):
+                            job_description = str(job_description) if job_description is not None else ""
 
                     # Get dates
                     published_at = job_details.get("published_at")
                     updated_at = job_details.get("updated_at")
+
+                    # Get requisition ID if available
                     requisition_id = job_details.get("requisition_id")
+
+                    # Get work type if available
+                    work_type = job_details.get("work_type")
+
+                    # Get compensation if available
+                    compensation = job_details.get("compensation")
 
                     # Convert any structured data to JSON strings
                     raw_data = None
@@ -359,22 +390,40 @@ def greenhouse_company_jobs_discovery(context: AssetExecutionContext, config: Gr
 
                     # Prepare job record
                     job_record = {
-                        "job_id": job_id,  # Now guaranteed to be a string
-                        "company_id": str(company_id),  # Ensure company_id is string too
-                        "job_title": job_title,
-                        "job_description": job_description,
+                        "job_id": str(job_id),  # Ensure job_id is a string
+                        "company_id": str(company_id),  # Ensure company_id is a string
+                        "job_title": job_title if job_title else "",  # Default to empty string if None
+                        "job_description": job_details.get("job_description", "") if job_details.get("job_description", "") is not None else "",  # Default to empty string if None
                         "job_url": job_url,
-                        "location": location_str,
-                        "department": department,
-                        "department_id": str(department_id) if department_id else None,
-                        "published_at": published_at,
-                        "updated_at": updated_at,
-                        "requisition_id": str(requisition_id) if requisition_id else None,
+                        "location": location_str if location_str else "",  # Default to empty string if None
+                        "department": department if department else "",  # Default to empty string if None
+                        "department_id": str(department_id) if department_id else "",  # Default to empty string if None
+                        "published_at": published_at if published_at else None,  # Keep as None for date handling
+                        "updated_at": updated_at if updated_at else None,  # Keep as None for date handling
+                        "requisition_id": str(requisition_id) if requisition_id else "",  # Default to empty string if None
                         "date_retrieved": datetime.now().isoformat(),
                         "is_active": True,
-                        "raw_data": raw_data,
-                        "partition_key": partition_key
+                        "raw_data": raw_data if raw_data else "{}",  # Default to empty JSON if None
+                        "partition_key": partition_key,
+                        "work_type": work_type if work_type else "",  # Default to empty string if None
+                        "compensation": compensation if compensation else ""  # Default to empty string if None
                     }
+
+                    # Extra validation to ensure no complex types in job_record
+                    for key, value in job_record.items():
+                        if isinstance(value, (dict, list)):
+                            context.log.warning(f"Converting complex type in {key} to string for job {job_id}")
+                            try:
+                                job_record[key] = json.dumps(value)
+                            except:
+                                job_record[key] = str(value)
+                        elif value is None and key not in ["published_at", "updated_at"]:
+                            # Allow None only for date fields, convert to empty string for others
+                            context.log.warning(f"Converting None value in {key} to empty string for job {job_id}")
+                            job_record[key] = ""
+
+                    # Debug logging at lower level
+                    context.log.debug(f"Prepared job record for job_id {job_id}")
 
                     if existing_job:
                         # For existing jobs, we'll handle updates in a separate step
@@ -445,7 +494,9 @@ def greenhouse_company_jobs_discovery(context: AssetExecutionContext, config: Gr
                     date_retrieved TIMESTAMP,
                     is_active BOOL,
                     raw_data STRING,
-                    partition_key STRING
+                    partition_key STRING,
+                    work_type STRING,
+                    compensation STRING
                 )
                 """
                 query_job = client.query(create_temp_sql)
@@ -459,9 +510,23 @@ def greenhouse_company_jobs_discovery(context: AssetExecutionContext, config: Gr
                     if col.endswith('_id') or col == 'job_id' or col == 'company_id':
                         jobs_df[col] = jobs_df[col].astype(str)
 
-                # Handle other object columns
+                # Handle other object columns - ensure all are proper strings
                 for col in jobs_df.select_dtypes(include=['object']).columns:
+                    # Replace None with empty string and convert all to strings
                     jobs_df[col] = jobs_df[col].fillna('').astype(str)
+
+                # Explicitly handle common problematic columns
+                if 'department' in jobs_df.columns:
+                    # Ensure department is properly stringified
+                    jobs_df['department'] = jobs_df['department'].apply(
+                        lambda x: x if isinstance(x, str) else (str(x) if x is not None else '')
+                    )
+
+                if 'location' in jobs_df.columns:
+                    # Ensure location is properly stringified
+                    jobs_df['location'] = jobs_df['location'].apply(
+                        lambda x: x if isinstance(x, str) else (str(x) if x is not None else '')
+                    )
 
                 # Convert date columns
                 if 'published_at' in jobs_df.columns:
@@ -491,9 +556,36 @@ def greenhouse_company_jobs_discovery(context: AssetExecutionContext, config: Gr
                         bigquery.SchemaField("date_retrieved", "TIMESTAMP"),
                         bigquery.SchemaField("is_active", "BOOL"),
                         bigquery.SchemaField("raw_data", "STRING"),
-                        bigquery.SchemaField("partition_key", "STRING")
+                        bigquery.SchemaField("partition_key", "STRING"),
+                        bigquery.SchemaField("work_type", "STRING"),
+                        bigquery.SchemaField("compensation", "STRING")
                     ]
                 )
+
+                # Final sanity check on data types to catch any remaining issues
+                try:
+                    # Check for any remaining dictionary or complex types that need to be converted
+                    for col in jobs_df.columns:
+                        if jobs_df[col].apply(lambda x: isinstance(x, (dict, list))).any():
+                            context.log.warning(f"Converting complex types in column {col} to strings")
+                            jobs_df[col] = jobs_df[col].apply(lambda x:
+                                json.dumps(x) if isinstance(x, (dict, list)) else str(x))
+
+                    # Check for NaN values and replace with appropriate values based on column type
+                    for col in jobs_df.columns:
+                        if pd.isna(jobs_df[col]).any():
+                            if col in ["job_title", "job_description", "job_url", "location",
+                                      "department", "requisition_id", "work_type",
+                                      "compensation", "raw_data", "partition_key"]:
+                                # String columns get empty string
+                                jobs_df[col] = jobs_df[col].fillna('')
+                            elif col == "is_active":
+                                # Boolean columns get False
+                                jobs_df[col] = jobs_df[col].fillna(False)
+
+                    context.log.info(f"DataFrame prepared for BigQuery: {len(jobs_df)} rows")
+                except Exception as e:
+                    context.log.error(f"Error in final dataframe preparation: {str(e)}")
 
                 # Load the dataframe into the temporary table
                 load_job = client.load_table_from_dataframe(
@@ -501,27 +593,35 @@ def greenhouse_company_jobs_discovery(context: AssetExecutionContext, config: Gr
                     temp_table_name,
                     job_config=job_config
                 )
-                load_job.result()
+                result = load_job.result()
+
+                context.log.info(f"Load job completed with state: {load_job.state}")
+                if load_job.errors:
+                    context.log.error(f"Load job errors: {load_job.errors}")
 
                 # Insert only new jobs (not already in the main table)
                 insert_sql = f"""
                 INSERT INTO {dataset_name}.greenhouse_jobs (
                     job_id, company_id, job_title, job_description, job_url,
                     location, department, department_id, published_at, updated_at,
-                    requisition_id, date_retrieved, is_active, raw_data, partition_key
+                    requisition_id, date_retrieved, is_active, raw_data, partition_key,
+                    work_type, compensation
                 )
                 SELECT
                     t.job_id, t.company_id, t.job_title, t.job_description, t.job_url,
                     t.location, t.department, t.department_id, t.published_at, t.updated_at,
-                    t.requisition_id, t.date_retrieved, t.is_active, t.raw_data, t.partition_key
+                    t.requisition_id, t.date_retrieved, t.is_active, t.raw_data, t.partition_key,
+                    t.work_type, t.compensation
                 FROM {temp_table_name} t
                 LEFT JOIN {dataset_name}.greenhouse_jobs j
                     ON t.job_url = j.job_url
                 WHERE j.job_url IS NULL
                 """
 
+                context.log.info(f"Running insertion SQL")
+
                 query_job = client.query(insert_sql)
-                query_job.result()
+                insert_result = query_job.result()
 
                 # Update existing jobs
                 update_sql = f"""
@@ -538,13 +638,15 @@ def greenhouse_company_jobs_discovery(context: AssetExecutionContext, config: Gr
                     j.date_retrieved = t.date_retrieved,
                     j.is_active = t.is_active,
                     j.raw_data = t.raw_data,
-                    j.partition_key = t.partition_key
+                    j.partition_key = t.partition_key,
+                    j.work_type = t.work_type,
+                    j.compensation = t.compensation
                 FROM {temp_table_name} t
                 WHERE j.job_url = t.job_url
                 """
 
                 query_job = client.query(update_sql)
-                query_job.result()
+                update_result = query_job.result()
 
                 # Drop the temporary table
                 query_job = client.query(f"DROP TABLE IF EXISTS {temp_table_name}")

@@ -624,14 +624,6 @@ class BambooHRScraper(BaseScraper):
                 print("DEBUG: No date_posted field available")  # Console debug
                 job_details["is_recent"] = True
 
-            # Extract compensation field
-            if "compensation" in job_opening:
-                job_details['compensation'] = job_opening.get("compensation")
-                logging.info(f"Found compensation field: {job_opening.get('compensation')}")
-                print(f"DEBUG: Found compensation field: {job_opening.get('compensation')}")  # Console debug
-
-            job_details['raw_data'] = job_data
-
             # Extract location with different possible structures
             if "location" in job_opening and job_opening["location"]:
                 location_data = job_opening["location"]
@@ -655,6 +647,63 @@ class BambooHRScraper(BaseScraper):
                         job_details["location_string"] = ", ".join(loc_parts)
                 elif isinstance(location_data, str):
                     job_details["location_string"] = location_data
+
+            # Check atsLocation for data if standard location is empty or has null fields
+            if (not job_details.get("location_string") or "null" in job_details.get("location_string", "")) and "atsLocation" in job_opening and job_opening["atsLocation"]:
+                ats_location = job_opening["atsLocation"]
+                self.log_message("info", f"Found atsLocation data: {ats_location}")
+                print(f"DEBUG: Found atsLocation data: {ats_location}")  # Console debug
+
+                if isinstance(ats_location, dict):
+                    # Create formatted location string from atsLocation
+                    loc_parts = []
+                    if ats_location.get("city"):
+                        loc_parts.append(ats_location["city"])
+                    if ats_location.get("state"):
+                        loc_parts.append(ats_location["state"])
+                    if ats_location.get("country") and not (loc_parts and ats_location.get("country") == "United States"):
+                        # Only add country if it's not USA (since state already gives that context)
+                        loc_parts.append(ats_location["country"])
+
+                    if loc_parts:
+                        job_details["location_string"] = ", ".join(loc_parts)
+                        job_details["location"] = {
+                            "city": ats_location.get("city"),
+                            "state": ats_location.get("state"),
+                            "country": ats_location.get("country"),
+                            "country_id": ats_location.get("countryId")
+                        }
+
+            # Extract work location type if available (0=In Office, 1=Remote, 3=Hybrid)
+            if "locationType" in job_opening:
+                location_type_value = job_opening.get("locationType")
+                location_type = None
+
+                if location_type_value == "0":
+                    location_type = "In Office"
+                elif location_type_value == "1":
+                    location_type = "Remote"
+                elif location_type_value == "3":
+                    location_type = "Hybrid"
+
+                if location_type:
+                    job_details["work_type"] = location_type
+                    self.log_message("info", f"Found work type: {location_type}")
+                    print(f"DEBUG: Found work type: {location_type}")  # Console debug
+
+                    # Append work type to location string if it exists
+                    if job_details.get("location_string"):
+                        job_details["location_string"] = f"{job_details['location_string']} ({location_type})"
+                    else:
+                        job_details["location_string"] = location_type
+
+            # Extract compensation field
+            if "compensation" in job_opening:
+                job_details['compensation'] = job_opening.get("compensation")
+                logging.info(f"Found compensation field: {job_opening.get('compensation')}")
+                print(f"DEBUG: Found compensation field: {job_opening.get('compensation')}")  # Console debug
+
+            job_details['raw_data'] = job_data
 
             return job_details
 

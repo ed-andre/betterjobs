@@ -35,7 +35,7 @@ class WorkdayJobsDiscoveryConfig(Config):
     days_to_look_back: int = 14  # Job freshness threshold in days
     batch_size: int = 10  # Companies per batch before committing
     skip_detailed_fetch: bool = False  # Set to True to skip detailed job info
-    skip_processed_companies: bool = False  # Process all companies by default, even if already in checkpoint
+    process_all_companies: bool = True  # By default, process all companies regardless of checkpoint status
 
 @asset(
     group_name="job_discovery",
@@ -133,7 +133,9 @@ def workday_company_jobs_discovery(context: AssetExecutionContext, config: Workd
         date_retrieved TIMESTAMP,
         is_active BOOL,
         raw_data STRING,
-        partition_key STRING
+        partition_key STRING,
+        work_type STRING,
+        compensation STRING
     )
     """
 
@@ -164,7 +166,7 @@ def workday_company_jobs_discovery(context: AssetExecutionContext, config: Workd
     checkpoint_results = []
     failed_companies = []
 
-    if checkpoint_file.exists() and not config.skip_processed_companies:
+    if checkpoint_file.exists() and not config.process_all_companies:
         try:
             checkpoint_df = pd.read_csv(checkpoint_file)
             processed_company_ids = set(checkpoint_df["company_id"].astype(str).tolist())
@@ -183,7 +185,7 @@ def workday_company_jobs_discovery(context: AssetExecutionContext, config: Workd
             context.log.error(f"Error loading failed companies file: {str(e)}")
 
     # Filter out already processed companies
-    if not config.skip_processed_companies:
+    if not config.process_all_companies:
         companies_to_process = companies_df[~companies_df["company_id"].astype(str).isin(processed_company_ids)]
         context.log.info(f"{len(companies_to_process)} companies remaining to process")
     else:
@@ -308,6 +310,8 @@ def workday_company_jobs_discovery(context: AssetExecutionContext, config: Workd
                     employment_type = ""
                     date_posted = ""
                     valid_through = ""
+                    work_type = job.get("work_type", "")
+                    compensation = ""
 
                     if not config.skip_detailed_fetch:
                         try:
@@ -319,6 +323,10 @@ def workday_company_jobs_discovery(context: AssetExecutionContext, config: Workd
                             date_posted = job_details.get("date_posted", "")
                             valid_through = job_details.get("valid_through", "")
                             employment_type = job_details.get("employment_type", "")
+
+                            # Get work_type from details if available
+                            if job_details.get("work_type"):
+                                work_type = job_details.get("work_type")
 
                             # Update with more detailed raw data if available
                             if job_details.get("raw_data"):
@@ -378,7 +386,9 @@ def workday_company_jobs_discovery(context: AssetExecutionContext, config: Workd
                         "date_retrieved": datetime.now().isoformat(),
                         "is_active": True,
                         "raw_data": raw_data,
-                        "partition_key": partition_key
+                        "partition_key": partition_key,
+                        "work_type": work_type,
+                        "compensation": compensation
                     }
 
                     if existing_job:
@@ -450,7 +460,9 @@ def workday_company_jobs_discovery(context: AssetExecutionContext, config: Workd
                     date_retrieved TIMESTAMP,
                     is_active BOOL,
                     raw_data STRING,
-                    partition_key STRING
+                    partition_key STRING,
+                    work_type STRING,
+                    compensation STRING
                 )
                 """
                 query_job = client.query(create_temp_sql)
@@ -495,7 +507,9 @@ def workday_company_jobs_discovery(context: AssetExecutionContext, config: Workd
                         bigquery.SchemaField("date_retrieved", "TIMESTAMP"),
                         bigquery.SchemaField("is_active", "BOOL"),
                         bigquery.SchemaField("raw_data", "STRING"),
-                        bigquery.SchemaField("partition_key", "STRING")
+                        bigquery.SchemaField("partition_key", "STRING"),
+                        bigquery.SchemaField("work_type", "STRING"),
+                        bigquery.SchemaField("compensation", "STRING")
                     ]
                 )
 

@@ -33,7 +33,7 @@ class SmartRecruitersJobsDiscoveryConfig(Config):
     max_company_id: Optional[int] = None  # For batch processing
     days_to_look_back: int = 14  # Job freshness threshold in days
     batch_size: int = 10  # Companies per batch before committing
-    skip_processed_companies: bool = False  # Process all companies by default, even if already in checkpoint
+    process_all_companies: bool = True  # By default, process all companies regardless of checkpoint status
 
 @asset(
     group_name="job_discovery",
@@ -133,10 +133,14 @@ def smartrecruiters_company_jobs_discovery(context: AssetExecutionContext, confi
 
     # Resume from checkpoint if exists
     processed_company_ids = set()
-    if checkpoint_file.exists():
+    checkpoint_results = []
+    failed_companies = []
+
+    if checkpoint_file.exists() and not config.process_all_companies:
         try:
             checkpoint_df = pd.read_csv(checkpoint_file)
             processed_company_ids = set(checkpoint_df["company_id"].astype(str).tolist())
+            checkpoint_results = checkpoint_df.to_dict("records")
             context.log.info(f"Loaded {len(processed_company_ids)} previously processed companies from checkpoint")
 
             # Update stats from checkpoint
@@ -152,7 +156,7 @@ def smartrecruiters_company_jobs_discovery(context: AssetExecutionContext, confi
             context.log.error(f"Error loading checkpoint file: {str(e)}")
 
     # Skip already processed companies if configured to do so
-    if config.skip_processed_companies and checkpoint_file.exists():
+    if not config.process_all_companies and checkpoint_file.exists():
         companies_to_process = companies_df[~companies_df["company_id"].astype(str).isin(processed_company_ids)]
         context.log.info(f"{len(companies_to_process)} SmartRecruiters companies remaining to process after skipping processed ones")
     else:
@@ -161,7 +165,6 @@ def smartrecruiters_company_jobs_discovery(context: AssetExecutionContext, confi
         context.log.info(f"Processing all {len(companies_to_process)} SmartRecruiters companies in this partition")
 
     # Load previously failed companies
-    failed_companies = []
     if failed_companies_file.exists():
         try:
             failed_df = pd.read_csv(failed_companies_file)
@@ -201,14 +204,6 @@ def smartrecruiters_company_jobs_discovery(context: AssetExecutionContext, confi
     # Process companies in batches
     batch_size = config.batch_size
     new_failed_companies = []
-    checkpoint_results = []
-
-    # Load previous checkpoint results if exists
-    if checkpoint_file.exists():
-        try:
-            checkpoint_results = pd.read_csv(checkpoint_file).to_dict("records")
-        except Exception:
-            checkpoint_results = []
 
     # Process companies in batches
     for i in range(0, len(companies_to_process), batch_size):

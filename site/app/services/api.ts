@@ -19,6 +19,8 @@ export interface Job {
   is_active: boolean;
   created_at: string;
   updated_at: string;
+//   work_type: string | null;
+//   compensation: string | null;
 }
 
 // Supabase connection configuration
@@ -73,6 +75,7 @@ export async function getJobs(options: FetchJobsOptions = {}): Promise<Job[]> {
         is_active,
         created_at,
         updated_at
+
       `)
       .eq('is_active', true);
 
@@ -134,7 +137,7 @@ export async function getAllJobs(): Promise<Job[]> {
       .eq('is_active', true)
       .order('date_posted', { ascending: false, nullsFirst: false })
       .order('date_retrieved', { ascending: false })
-      .limit(2000);
+      .limit(10000);
 
     if (error) {
       console.error("Error fetching jobs:", error);
