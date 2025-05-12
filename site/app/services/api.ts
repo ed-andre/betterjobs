@@ -137,7 +137,7 @@ export async function getAllJobs(): Promise<Job[]> {
       .eq('is_active', true)
       .order('date_posted', { ascending: false, nullsFirst: false })
       .order('date_retrieved', { ascending: false })
-      .limit(10000);
+      .limit(5000);
 
     if (error) {
       console.error("Error fetching jobs:", error);
