@@ -8,6 +8,7 @@ from dagster_duckdb import DuckDBResource
 from dagster_gcp_pandas import BigQueryPandasIOManager
 from dagster_gcp import BigQueryResource
 from dagster_gemini import GeminiResource
+from dagster_aws.s3 import S3Resource
 
 from dagster_openai import OpenAIResource
 from pathlib import Path
@@ -127,6 +128,11 @@ resources = {
         password=EnvVar("SUPABASE_PASSWORD"),
         dbname=EnvVar("SUPABASE_DB"),
         sslmode="require"
+    ),
+    "s3": S3Resource(
+        region_name=EnvVar("AWS_REGION"),
+        aws_access_key_id=EnvVar("AWS_ACCESS_KEY_ID"),
+        aws_secret_access_key=EnvVar("AWS_SECRET_ACCESS_KEY")
     ),
 }
 

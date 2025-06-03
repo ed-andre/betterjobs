@@ -11,6 +11,7 @@ setup(
         "dagster-openai",
         "dagster-gcp",
         "dagster-gcp-pandas",
+        "dagster-aws",
         "pandas",
         "duckdb",
         "sqlescapy",

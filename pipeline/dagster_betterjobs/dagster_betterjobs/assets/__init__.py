@@ -5,7 +5,7 @@ from dagster_betterjobs.assets.greenhouse_company_urls import greenhouse_company
 from dagster_betterjobs.assets.icims_company_urls import icims_company_urls, retry_failed_icims_company_urls
 from dagster_betterjobs.assets.jobvite_company_urls import jobvite_company_urls, retry_failed_jobvite_company_urls
 from dagster_betterjobs.assets.workday_company_urls import workday_company_urls, retry_failed_workday_company_urls
-from dagster_betterjobs.assets.master_company_urls import master_company_urls
+from dagster_betterjobs.assets.master_company_urls import master_company_urls, export_master_company_urls_to_csv
 from dagster_betterjobs.assets.adhoc_company_urls import adhoc_company_urls
 
 from dagster_betterjobs.assets.db_setup import initialize_db
@@ -36,6 +36,7 @@ __all__ = [
     "smartrecruiters_company_urls",
     "retry_failed_smartrecruiters_company_urls",
     "master_company_urls",
+    "export_master_company_urls_to_csv",
     "adhoc_company_urls",
     "initialize_db",
     "scrape_jobs",

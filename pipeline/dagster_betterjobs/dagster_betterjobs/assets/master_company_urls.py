@@ -356,3 +356,125 @@ def master_company_urls(context: AssetExecutionContext) -> None:
     })
 
     return None
+
+@asset(
+    group_name="company_urls",
+    kinds={"python", "csv", "s3"},
+    deps=["master_company_urls"],
+    required_resource_keys={"bigquery", "s3"}
+)
+def export_master_company_urls_to_csv(context: AssetExecutionContext) -> None:
+    """
+    Exports the master company URLs table to platform-specific CSV files.
+    Creates separate CSV files for each platform in the output/master_urls_csv folder
+    and uploads them to S3.
+    """
+    # Get BigQuery client and dataset name
+    client = context.resources.bigquery
+    dataset_name = os.getenv("GCP_DATASET_ID")
+
+    # Get S3 client and bucket name
+    s3_client = context.resources.s3
+    bucket_name = os.getenv("S3_BUCKET_NAME")
+
+    if not bucket_name:
+        raise ValueError("S3_BUCKET_NAME environment variable is not set")
+
+    # Create output directory if it doesn't exist
+    output_dir = os.path.join("output", "master_urls_csv")
+    os.makedirs(output_dir, exist_ok=True)
+
+    try:
+        # Query the master table
+        query = f"""
+        SELECT
+            company_id,
+            company_name,
+            company_industry,
+            platform,
+            ats_url,
+            career_url,
+            url_verified,
+            date_added,
+            last_updated
+        FROM {dataset_name}.master_company_urls
+        ORDER BY platform, company_name
+        """
+
+        query_job = client.query(query)
+        df = query_job.to_dataframe()
+
+        if df.empty:
+            context.log.warning("No data found in master_company_urls table")
+            return None
+
+        context.log.info(f"Loaded {len(df)} records from master_company_urls table")
+
+        # Get unique platforms
+        platforms = df['platform'].unique()
+
+        # Export each platform to separate CSV file
+        exported_files = []
+        uploaded_files = []
+        total_exported = 0
+
+        for platform in platforms:
+            platform_df = df[df['platform'] == platform].copy()
+
+            if not platform_df.empty:
+                # Create filename
+                filename = f"{platform}_company_urls.csv"
+                filepath = os.path.join(output_dir, filename)
+
+                # Export to CSV locally
+                platform_df.to_csv(filepath, index=False)
+                exported_files.append(filename)
+                total_exported += len(platform_df)
+
+                context.log.info(f"Exported {len(platform_df)} {platform} companies to {filename}")
+
+                # Upload to S3
+                try:
+                    # Convert dataframe to CSV string for S3 upload
+                    csv_data = platform_df.to_csv(index=False)
+
+                    # S3 key (path) for the file
+                    s3_key = f"master_urls_csv/{filename}"
+
+                    # Upload to S3
+                    s3_client.put_object(
+                        Bucket=bucket_name,
+                        Key=s3_key,
+                        Body=csv_data,
+                        ContentType='text/csv'
+                    )
+
+                    uploaded_files.append(s3_key)
+                    context.log.info(f"Uploaded {filename} to S3 at s3://{bucket_name}/{s3_key}")
+
+                except Exception as s3_error:
+                    context.log.error(f"Failed to upload {filename} to S3: {str(s3_error)}")
+                    # Continue with other files even if one fails
+
+        # Log summary
+        context.log.info(f"Successfully exported {total_exported} total records across {len(exported_files)} files")
+        context.log.info(f"Local files created: {', '.join(exported_files)}")
+        context.log.info(f"S3 files uploaded: {len(uploaded_files)}/{len(exported_files)}")
+
+        # Add metadata
+        context.add_output_metadata({
+            "total_records_exported": MetadataValue.int(total_exported),
+            "files_created": MetadataValue.int(len(exported_files)),
+            "s3_files_uploaded": MetadataValue.int(len(uploaded_files)),
+            "platforms_exported": MetadataValue.text(", ".join(platforms)),
+            "output_directory": MetadataValue.text(output_dir),
+            "s3_bucket": MetadataValue.text(bucket_name),
+            "s3_files_list": MetadataValue.text(", ".join(uploaded_files)),
+            "local_files_list": MetadataValue.text(", ".join(exported_files))
+        })
+
+    except Exception as e:
+        context.log.error(f"Error exporting CSV files: {str(e)}")
+        raise e
+
+    return None
