@@ -114,7 +114,6 @@ def process_icims_companies(
     group_name="url_discovery",
     kinds={"gemini", "bigquery"},
     io_manager_key="bigquery_io",
-    deps=["initialize_db"],
     required_resource_keys={"bigquery", "gemini"}
 )
 def icims_company_urls(context: AssetExecutionContext) -> None:
@@ -485,7 +484,7 @@ def icims_company_urls(context: AssetExecutionContext) -> None:
     group_name="url_discovery",
     kinds={"gemini", "bigquery"},
     io_manager_key="bigquery_io",
-    deps=["initialize_db", "icims_company_urls"],
+    deps=["icims_company_urls"],
     required_resource_keys={"bigquery", "gemini"}
 )
 def retry_failed_icims_company_urls(context: AssetExecutionContext) -> None:

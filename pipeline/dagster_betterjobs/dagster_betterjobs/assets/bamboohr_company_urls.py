@@ -115,7 +115,6 @@ def process_bamboohr_companies(
     group_name="url_discovery",
     kinds={"gemini", "bigquery"},
     io_manager_key="bigquery_io",
-    deps=["initialize_db"],
     required_resource_keys={"bigquery", "gemini"}
 )
 def bamboohr_company_urls(context: AssetExecutionContext) -> None:
@@ -485,7 +484,7 @@ def bamboohr_company_urls(context: AssetExecutionContext) -> None:
     group_name="url_discovery",
     kinds={"gemini", "bigquery"},
     io_manager_key="bigquery_io",
-    deps=["initialize_db", "bamboohr_company_urls"],
+    deps=["bamboohr_company_urls"],
     required_resource_keys={"bigquery", "gemini"}
 )
 def retry_failed_bamboohr_company_urls(context: AssetExecutionContext) -> None:

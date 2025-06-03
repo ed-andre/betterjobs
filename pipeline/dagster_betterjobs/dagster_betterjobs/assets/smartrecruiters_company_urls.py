@@ -116,7 +116,6 @@ def process_smartrecruiters_companies(
     group_name="url_discovery",
     kinds={"gemini", "bigquery"},
     io_manager_key="bigquery_io",
-    deps=["initialize_db"],
     required_resource_keys={"bigquery", "gemini"}
 )
 def smartrecruiters_company_urls(context: AssetExecutionContext) -> None:
@@ -490,7 +489,7 @@ def smartrecruiters_company_urls(context: AssetExecutionContext) -> None:
     group_name="url_discovery",
     kinds={"gemini", "bigquery"},
     io_manager_key="bigquery_io",
-    deps=["initialize_db", "smartrecruiters_company_urls"],
+    deps=["smartrecruiters_company_urls"],
     required_resource_keys={"bigquery", "gemini"}
 )
 def retry_failed_smartrecruiters_company_urls(context: AssetExecutionContext) -> None:

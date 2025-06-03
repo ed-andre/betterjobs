@@ -120,7 +120,6 @@ def process_greenhouse_companies(
     group_name="url_discovery",
     kinds={"gemini", "bigquery"},
     io_manager_key="bigquery_io",
-    deps=["initialize_db"],
     required_resource_keys={"bigquery", "gemini"}
 )
 def greenhouse_company_urls(context: AssetExecutionContext) -> None:
@@ -492,7 +491,7 @@ def greenhouse_company_urls(context: AssetExecutionContext) -> None:
     group_name="url_discovery",
     kinds={"gemini", "bigquery"},
     io_manager_key="bigquery_io",
-    deps=["initialize_db", "greenhouse_company_urls"],
+    deps=["greenhouse_company_urls"],
     required_resource_keys={"bigquery", "gemini"}
 )
 def retry_failed_greenhouse_company_urls(context: AssetExecutionContext) -> None:

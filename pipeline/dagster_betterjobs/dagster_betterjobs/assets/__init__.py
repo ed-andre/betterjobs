@@ -8,7 +8,7 @@ from dagster_betterjobs.assets.workday_company_urls import workday_company_urls,
 from dagster_betterjobs.assets.master_company_urls import master_company_urls, export_master_company_urls_to_csv
 from dagster_betterjobs.assets.adhoc_company_urls import adhoc_company_urls
 
-from dagster_betterjobs.assets.db_setup import initialize_db
+
 
 from dagster_betterjobs.assets.bamboohr_jobs_discovery import bamboohr_company_jobs_discovery
 from dagster_betterjobs.assets.greenhouse_jobs_discovery import greenhouse_company_jobs_discovery
@@ -38,7 +38,6 @@ __all__ = [
     "master_company_urls",
     "export_master_company_urls_to_csv",
     "adhoc_company_urls",
-    "initialize_db",
     "scrape_jobs",
     "job_search_results",
     "bamboohr_company_jobs_discovery",
