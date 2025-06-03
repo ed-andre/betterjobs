@@ -58,12 +58,12 @@ from datetime import datetime
 
 # Schedule for running all job discovery assets (except iCIMS) plus job search
 @schedule(
-    cron_schedule="0 4 * * *",  # Run daily at 4 AM
+    cron_schedule="0 4 */2 * *",  # Run every other day at 4 AM
     execution_timezone="US/Eastern",
     job=full_jobs_discovery_and_search_job,
 )
 def full_jobs_discovery_and_search_schedule(context):
-    """Schedule that runs all job discovery assets (except iCIMS) plus job search daily."""
+    """Schedule that runs all job discovery assets (except iCIMS) plus job search every other day."""
     # Get all partition keys from alpha_partitions
     for partition_key in alpha_partitions.get_partition_keys():
         # Create a unique run key for each partition
@@ -78,12 +78,12 @@ def full_jobs_discovery_and_search_schedule(context):
 
 # Schedule for running all job discovery assets (except for ICMS) plus Supabase transport
 @schedule(
-    cron_schedule="0 12 * * *",  # Run daily at noon
+    cron_schedule="0 12 */2 * *",  # Run every other day at noon
     execution_timezone="US/Eastern",
     job=discovery_and_transport_job,
 )
 def full_jobs_discovery_and_supabase_schedule(context):
-    """Schedule that runs job discovery (except iCIMS) followed by Supabase transport daily at noon."""
+    """Schedule that runs job discovery (except iCIMS) followed by Supabase transport every other day at noon."""
     for partition_key in alpha_partitions.get_partition_keys():
         run_key = f"discovery_and_transport_{partition_key}_{context.scheduled_execution_time.strftime('%Y-%m-%d')}"
         yield RunRequest(

@@ -262,8 +262,8 @@ data_engineering_job = define_asset_job(
         ops={
             "search_jobs": {
                 "config": {
-                    "keywords": ["SQL", "database", "ETL", "pipeline", "data engineer"],
-                    "job_titles": ["SQL", "Database", "Data", "Software", "BI ", "Developer", "Engineer", "Analyst"],
+                    "keywords": ["SQL", "database", "ETL", "pipeline", "data engineer", "snowflake", "data warehouse", "data lake", "data platform", "data platform engineer", "data platform analyst", "data platform developer", "data platform architect", "data platform engineer", "data platform analyst", "data platform developer", "data platform architect"],
+                    "job_titles": ["SQL", "Database", "Data", "Software", "BI ", "Developer", "Engineer", "Analyst", "Data Engineer", "Data Analyst", "Data Developer", "Data Architect", "Data Engineer", "Data Analyst", "Data Developer", "Data Architect", "Snowflake"],
                     "excluded_keywords": ["overseas only", "non-US", "offshore"],
                     "locations": ["New York", "New Jersey", "NY", "NJ", "Location", ""],
                     "remote": True,
@@ -285,7 +285,7 @@ data_engineering_job = define_asset_job(
 def full_jobs_discovery_and_search_partitioned_config(partition_key: str):
     return {
         "ops": {
-            # "bamboohr_company_jobs_discovery": {"config": {}},
+            "bamboohr_company_jobs_discovery": {"config": {}},
             "greenhouse_company_jobs_discovery": {"config": {}},
             "workday_company_jobs_discovery": {"config": {}},
             "smartrecruiters_company_jobs_discovery": {"config": {}},
