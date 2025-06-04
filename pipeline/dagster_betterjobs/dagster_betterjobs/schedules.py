@@ -3,7 +3,9 @@ from .jobs import (
     full_jobs_discovery_and_search_job,
     full_jobs_discovery_except_icims_job,
     supabase_transport_job,
-    discovery_and_transport_job
+    discovery_and_transport_job,
+    data_engineering_job,
+    legal_positions_job
 )
 from .assets.bamboohr_jobs_discovery import alpha_partitions
 from datetime import datetime
@@ -91,3 +93,23 @@ def full_jobs_discovery_and_supabase_schedule(context):
             partition_key=partition_key,
             tags={"partition": partition_key}
         )
+
+# Schedule for data engineering job search
+@schedule(
+    cron_schedule="0 6 * * 1,3,5",  # Run Monday, Wednesday, Friday at 6 AM
+    execution_timezone="US/Eastern",
+    job=data_engineering_job,
+)
+def data_engineering_job_schedule():
+    """Schedule that runs data engineering job search three times a week."""
+    return {}
+
+# Schedule for legal positions job search
+@schedule(
+    cron_schedule="0 7 * * 1,3,5",  # Run Monday, Wednesday, Friday at 7 AM
+    execution_timezone="US/Eastern",
+    job=legal_positions_job,
+)
+def legal_positions_job_schedule():
+    """Schedule that runs legal positions job search three times a week."""
+    return {}

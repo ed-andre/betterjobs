@@ -280,6 +280,33 @@ data_engineering_job = define_asset_job(
     )
 )
 
+# Define a job for legal positions search
+legal_positions_job = define_asset_job(
+    name="legal_positions_job",
+    selection=AssetSelection.assets("search_jobs"),
+    description="Job that searches for Legal Counsel, Human Rights, International Law, and Legal Affairs positions",
+    config=RunConfig(
+        ops={
+            "search_jobs": {
+                "config": {
+                    "keywords": ["legal counsel", "legal advisor", "international law", "human rights", "humanitarian law", "legal affairs", "rule of law", "international arbitration", "ESG legal", "compliance", "ethics", "corporate social responsibility", "business and human rights", "transnational justice", "public policy law", "access to justice", "peacebuilding", "gender justice", "UN legal", "NGO legal", "Africa legal", "Geneva legal", "Brussels legal", "remote legal"],
+                    "job_titles": ["Legal", "Counsel", "Advisor", "Officer", "Consultant", "Lawyer", "Specialist", "Human Rights", "International", "Rule of Law", "Legal Affairs", "Compliance", "Ethics", "ESG", "Corporate Social Responsibility", "Justice", "Arbitration", "Public Policy", "Humanitarian", "Peacebuilding", "Gender", "UN", "NGO"],
+                    "excluded_keywords": ["overseas only", "non-US", "paralegal", "legal assistant", "court clerk", "notary"],
+                    "locations": ["New York", "New Jersey", "NY", "NJ", "Washington DC", "Geneva", "Brussels", "Paris", "Madrid", "Location", ""],
+                    "remote": True,
+                    "days_back": 10,
+                    "max_results": 500,
+                    "min_match_score": 0.1,
+                    "platforms": ["greenhouse", "bamboohr", "smartrecruiters", "workday"],
+                    "output_format": "html",
+                    "output_file": os.path.join(os.getenv("JOB_SEARCH_OUTPUT_FOLDER", "output"), "legal_positions_jobs_{date}.html"),
+                    "include_descriptions": True
+                }
+            }
+        }
+    )
+)
+
 # Define a job for all job discovery across platforms (except iCIMS) plus job search
 @static_partitioned_config(partition_keys=alpha_partitions.get_partition_keys())
 def full_jobs_discovery_and_search_partitioned_config(partition_key: str):
