@@ -32,7 +32,7 @@ class WorkdayJobsDiscoveryConfig(Config):
     retry_delay: int = 2
     min_company_id: Optional[int] = None  # For batch processing
     max_company_id: Optional[int] = None  # For batch processing
-    days_to_look_back: int = 14  # Job freshness threshold in days
+    days_to_look_back: int = 8  # Job freshness threshold in days
     batch_size: int = 10  # Companies per batch before committing
     skip_detailed_fetch: bool = False  # Set to True to skip detailed job info
     process_all_companies: bool = True  # By default, process all companies regardless of checkpoint status
