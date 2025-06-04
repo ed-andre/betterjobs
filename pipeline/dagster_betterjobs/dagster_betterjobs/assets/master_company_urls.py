@@ -358,7 +358,7 @@ def master_company_urls(context: AssetExecutionContext) -> None:
     return None
 
 @asset(
-    group_name="company_urls",
+    group_name="adhoc_export_company_urls",
     kinds={"python", "csv", "s3"},
     deps=["master_company_urls"],
     required_resource_keys={"bigquery", "s3"}
@@ -388,7 +388,6 @@ def export_master_company_urls_to_csv(context: AssetExecutionContext) -> None:
         # Query the master table
         query = f"""
         SELECT
-            company_id,
             company_name,
             company_industry,
             platform,
